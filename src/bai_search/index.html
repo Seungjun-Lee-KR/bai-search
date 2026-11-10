@@ -5,8 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>감사원 결정례 검색</title>
 <style>
-  :root { --bg:#fafafa; --fg:#1d1d1f; --muted:#6b6b70; --line:#e2e2e6; --accent:#1f4fd1; --warn:#b45309; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#141416; --fg:#ececf0; --muted:#9a9aa2; --line:#2c2c31; --accent:#7ea2ff; --warn:#f0a35a; } }
+  :root { --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --other:#898781; --none:#c3c2b7; --grid:#e1e0d9; --axis:#c3c2b7;
+          --q1:#cde2fb; --q2:#9ec5f4; --q3:#6da7ec; --q4:#2a78d6; --q5:#1c5cab; --card:#ffffff; --on-accent:#ffffff;
+          --qt1:#0b0b0b; --qt2:#0b0b0b; --qt3:#0b0b0b; --qt4:#ffffff; --qt5:#ffffff;
+          --bg:#fafafa; --fg:#1d1d1f; --muted:#6b6b70; --line:#e2e2e6; --accent:#1f4fd1; --warn:#b45309; }
+  @media (prefers-color-scheme: dark) { :root { --s1:#3987e5; --s2:#d95926; --s3:#199e70; --other:#898781; --none:#4a4a46; --grid:#2c2c2a; --axis:#383835;
+          --q1:#184f95; --q2:#1c5cab; --q3:#256abf; --q4:#3987e5; --q5:#86b6ef; --card:#1a1a19; --on-accent:#0b0b0b;
+          --qt1:#ffffff; --qt2:#ffffff; --qt3:#ffffff; --qt4:#ffffff; --qt5:#0b0b0b;
+          --bg:#141416; --fg:#ececf0; --muted:#9a9aa2; --line:#2c2c31; --accent:#7ea2ff; --warn:#f0a35a; } }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 system-ui, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
   main { max-width:960px; margin:0 auto; padding:24px 16px; }
@@ -14,7 +20,7 @@
   form { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; margin-bottom:20px; }
   input, select, button { font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:inherit; }
   input[name=q] { grid-column:1/-1; }
-  button { background:var(--accent); color:#fff; border:0; cursor:pointer; }
+  button { background:var(--accent); color:var(--on-accent); border:0; cursor:pointer; }
   .item { border-top:1px solid var(--line); padding:14px 0; cursor:pointer; }
   .item h2 { font-size:16px; margin:0 0 4px; }
   .meta { color:var(--muted); font-size:13px; }
@@ -41,6 +47,46 @@
   .ok { color:#15803d; } .dup { color:var(--muted); }
   @media (prefers-color-scheme: dark) { .ok { color:#4ade80; } }
   .scroll { overflow-x:auto; }
+  /* ---- 통계 대시보드 ---- */
+  .filters { display:flex; flex-wrap:wrap; gap:8px; align-items:end; margin-bottom:16px; }
+  .filters label { font-size:13px; color:var(--muted); display:flex; flex-direction:column; gap:4px; }
+  .filters input { width:110px; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr)); gap:12px; margin-bottom:16px; }
+  .kpi, .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+  .kpi .v { font-size:28px; font-weight:600; line-height:1.2; margin-top:4px; }
+  .kpi .k, .kpi .s { font-size:13px; color:var(--muted); }
+  .meter { height:6px; border-radius:3px; background:var(--grid); margin-top:8px; overflow:hidden; }
+  .meter > div { height:100%; background:var(--s1); border-radius:3px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(380px,100%),1fr)); gap:12px; }
+  .card.wide { grid-column:1/-1; }
+  .card h2 { font-size:15px; margin:0 0 2px; }
+  .card .sub { font-size:12px; color:var(--muted); margin:0 0 12px; }
+  .bars { display:grid; grid-template-columns:minmax(0,max-content) minmax(40px,1fr) auto; gap:6px 10px; align-items:center; font-size:13px; }
+  .bars .row { display:contents; cursor:pointer; }
+  .bars .name { color:var(--fg); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:190px; min-width:0; }
+  @media (max-width:520px) { .bars .name { max-width:120px; } .bars .name small, .bars .val small { display:none; } .kpi .v { font-size:22px; } }
+  .bars .name small { color:var(--muted); margin-left:4px; }
+  .bars .track { height:14px; }
+  .bars .bar { height:14px; background:var(--s1); border-radius:0 4px 4px 0; min-width:2px; }
+  .bars .val { font-variant-numeric:tabular-nums; color:var(--fg); text-align:right; white-space:nowrap; }
+  .bars .val small { color:var(--muted); margin-left:6px; }
+  .bars .row:hover .bar { filter:brightness(1.12); }
+  .bars .row:hover .name { text-decoration:underline; }
+  .legend { display:flex; flex-wrap:wrap; gap:4px 14px; font-size:12px; color:var(--muted); margin:0 0 8px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:-1px; }
+  svg text { fill:var(--muted); font-size:11px; font-family:inherit; }
+  .heat { border-collapse:separate; border-spacing:2px; font-size:12px; width:auto; }
+  .heat th { font-weight:normal; color:var(--muted); border:0; padding:2px 6px; white-space:nowrap; }
+  .heat td { border:0; border-radius:3px; min-width:46px; text-align:center; padding:5px 4px; font-variant-numeric:tabular-nums; cursor:default; }
+  .heat td.z { color:var(--muted); }
+  #tip { position:fixed; pointer-events:none; background:var(--card); color:var(--fg); border:1px solid var(--line);
+         border-radius:6px; padding:6px 9px; font-size:12px; box-shadow:0 2px 8px rgba(0,0,0,.12); display:none; z-index:10; max-width:260px; }
+  .linkbtn { background:none; color:var(--accent); padding:0; border:0; font-size:12px; cursor:pointer; }
+  .empty { color:var(--muted); font-size:13px; padding:12px 0; }
+  .note { font-size:12px; color:var(--muted); margin-top:12px; }
+  tr.click { cursor:pointer; }
+  tr.click:hover td { background:var(--line); }
+
   .cond .tag { border-color:var(--accent); color:var(--accent); }
   .cond a { color:var(--muted); margin-left:6px; }
   .src:target { border-left-color:var(--accent); }
@@ -49,7 +95,18 @@
 <body>
 <main>
   <h1>감사원 결정례 검색</h1>
-  <div class="tabs"><button id="t-search" class="on">검색</button><button id="t-ask">질문하기</button><button id="t-upload">자료 추가</button></div>
+  <div class="tabs"><button id="t-search" class="on">검색</button><button id="t-ask">질문하기</button><button id="t-upload">자료 추가</button><button id="t-stats">통계</button></div>
+  <section id="p-stats" class="hidden">
+    <form class="filters" id="sf">
+      <label>연도부터<input type="number" name="year_from" placeholder="전체"></label>
+      <label>연도까지<input type="number" name="year_to" placeholder="전체"></label>
+      <label>기관유형<select name="agency_type"><option value="">전체</option>
+        <option>중앙행정기관</option><option>지방자치단체</option><option>공공기관</option><option>기타</option></select></label>
+      <button>적용</button>
+    </form>
+    <div id="stats"></div>
+  </section>
+  <div id="tip" role="tooltip"></div>
   <section id="p-upload" class="hidden">
     <form id="uf">
       <div id="drop">감사원 홈페이지에서 내려받은 PDF·HWP·HWPX·ZIP 파일을 여기에 끌어다 놓거나 눌러서 고르세요
@@ -137,7 +194,8 @@ const runSearch = async (auto = true) => {
 document.getElementById("f").addEventListener("submit", e => { e.preventDefault(); runSearch(); });
 const tab = on => {
   if (on === "upload") loadRecent();
-  for (const k of ["search", "ask", "upload"]) {
+  if (on === "stats") loadStats();
+  for (const k of ["search", "ask", "upload", "stats"]) {
     document.getElementById("t-" + k).classList.toggle("on", k === on);
     document.getElementById("p-" + k).classList.toggle("hidden", k !== on);
   }
@@ -202,6 +260,163 @@ const runAsk = async (auto = true) => {
   const srcs = a.sources.map(s => `<div class=src id="src-${s.n}"><b>[${s.n}]</b> #${s.case_id} ${esc(s.title)}<br>“${esc(s.cited_text)}”</div>`).join("");
   const cases = a.cases.map(c => `<span class=tag>#${c.id} ${esc(c.title)} · ${esc(c.action_agency)}</span>`).join(" ");
   box.innerHTML = condHtml(a, "ask") + paras + (srcs ? "<h2>근거 원문</h2>" + srcs : "") + (cases ? `<p class=meta>검토한 사례: ${cases}</p>` : "");
+};
+
+document.getElementById("t-stats").onclick = () => tab("stats");
+document.getElementById("sf").addEventListener("submit", e => { e.preventDefault(); loadStats(); });
+
+// ---- 공통: 숫자, 툴팁, 검색으로 이동 ----
+const eok = n => n >= 1e8 ? (n / 1e8).toLocaleString("ko-KR", { maximumFractionDigits: 1 }) + "억 원"
+              : n >= 1e4 ? Math.round(n / 1e4).toLocaleString("ko-KR") + "만 원" : n.toLocaleString("ko-KR") + "원";
+const tip = document.getElementById("tip");
+document.addEventListener("mousemove", e => {
+  const t = e.target.closest("[data-tip]");
+  if (!t) { tip.style.display = "none"; return; }
+  tip.innerHTML = t.dataset.tip;
+  tip.style.display = "block";
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.min(e.clientX + 14, innerWidth - w - 8) + "px";
+  tip.style.top = (e.clientY + 14 + h > innerHeight ? e.clientY - h - 10 : e.clientY + 14) + "px";
+});
+const goSearch = filters => {
+  const f = document.getElementById("f");
+  f.reset();
+  for (const [k, v] of Object.entries(filters)) if (f.elements[k]) f.elements[k].value = v;
+  tab("search");
+  runSearch(false);
+};
+
+// ---- 가로 막대 (한 가지 색, 큰 순서) ----
+const barList = (rows, { name, sub, value, extra, tipOf, onClick }) => {
+  if (!rows.length) return "<p class=empty>자료가 없습니다.</p>";
+  const max = Math.max(...rows.map(value), 1);
+  return `<div class=bars>${rows.map((r, i) => `<div class=row data-i="${i}" data-tip="${esc(tipOf(r))}">
+      <span class=name title="${esc(name(r))}">${esc(name(r))}${sub ? `<small>${esc(sub(r))}</small>` : ""}</span>
+      <span class=track><div class=bar style="width:${(value(r) / max * 100).toFixed(1)}%"></div></span>
+      <span class=val>${value(r).toLocaleString("ko-KR")}건${extra ? `<small>${extra(r)}</small>` : ""}</span></div>`).join("")}</div>`;
+};
+const wireBars = (el, rows, onClick) => el.querySelectorAll(".row").forEach(r => r.onclick = () => onClick(rows[r.dataset.i]));
+
+// ---- 연도별 누적 세로 막대 (SVG) ----
+const GROUP_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--other)"];
+const niceMax = v => { if (v <= 5) return 5; const p = 10 ** Math.floor(Math.log10(v)); const m = v / p; return (m <= 2 ? 2 : m <= 5 ? 5 : 10) * p; };
+const yearChart = (data, groups) => {
+  if (!data.length) return "<p class=empty>연도 정보가 있는 사건이 없습니다. 공개일을 넣거나 AI 분류를 돌리면 채워집니다.</p>";
+  const series = [...groups.map((g, i) => ({ key: g, color: GROUP_COLORS[i] || "var(--other)" })), { key: "미분류", color: "var(--none)" }]
+    .filter(sr => data.some(d => d[sr.key] > 0));
+  const W = 860, H = 250, L = 34, R = 8, T = 20, B = 24;
+  const max = niceMax(Math.max(...data.map(d => d.total), 1));
+  const bw = Math.min(44, (W - L - R) / data.length * 0.6), step = (W - L - R) / data.length;
+  const y = v => T + (H - T - B) * (1 - v / max);
+  const ticks = [0, max / 4, max / 2, max * 3 / 4, max].filter(t => Number.isInteger(t));
+  let svg = ticks.map(t => `<line x1=${L} x2=${W - R} y1=${y(t)} y2=${y(t)} stroke="var(${t ? "--grid" : "--axis"})" stroke-width=1 />
+      <text x=${L - 6} y=${y(t) + 4} text-anchor=end>${t}</text>`).join("");
+  data.forEach((d, i) => {
+    const x = L + step * i + (step - bw) / 2;
+    let acc = 0;
+    const segs = series.map(sr => {
+      const v = d[sr.key]; if (!v) return "";
+      const y0 = y(acc), y1 = y(acc + v); acc += v;
+      return `<rect x=${x} y=${y1} width=${bw} height=${Math.max(y0 - y1 - 2, 1)} fill="${sr.color}" />`;
+    }).join("");
+    const top = y(d.total), r = Math.min(4, bw / 2);
+    svg += `<clipPath id="yc${i}"><path d="M${x},${y(0)} V${top + r} Q${x},${top} ${x + r},${top} H${x + bw - r} Q${x + bw},${top} ${x + bw},${top + r} V${y(0)} Z"/></clipPath>
+      <g clip-path="url(#yc${i})">${segs}</g>
+      ${d.total ? `<text x=${x + bw / 2} y=${top - 4} text-anchor=middle>${d.total}</text>` : ""}
+      <text x=${x + bw / 2} y=${H - 6} text-anchor=middle>${d.year}</text>
+      <rect x=${L + step * i} y=${T} width=${step} height=${H - T - B} fill="transparent" data-tip="${esc(
+        `<b>${d.year}년</b> ${d.total}건${d.amount ? " · " + eok(d.amount) : ""}<br>` +
+        series.filter(sr => d[sr.key]).map(sr => `<i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${sr.color}"></i> ${sr.key} ${d[sr.key]}건`).join("<br>"))}" />`;
+  });
+  const legend = `<div class=legend>${series.map(sr => `<span><i style="background:${sr.color}"></i>${sr.key}</span>`).join("")}</div>`;
+  const table = `<details class=note><summary>표로 보기</summary><table><tr><th>연도</th>${series.map(sr => `<th>${sr.key}</th>`).join("")}<th>합계</th><th>지적금액</th></tr>
+    ${data.map(d => `<tr><td>${d.year}</td>${series.map(sr => `<td>${d[sr.key]}</td>`).join("")}<td>${d.total}</td><td>${d.amount ? eok(d.amount) : "-"}</td></tr>`).join("")}</table></details>`;
+  return legend + `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="연도별 위반 그룹별 사건 수">${svg}</svg>` + table;
+};
+
+// ---- 위반유형 × 처분 열지도 ----
+const heatmap = (matrix, types, disps) => {
+  if (!matrix.length) return "<p class=empty>AI 분류를 마친 사건이 있어야 표시됩니다.</p>";
+  const cell = {}; matrix.forEach(m => cell[m.code + "|" + m.disposition] = m.cases);
+  const rows = types.filter(t => disps.some(d => cell[t.code + "|" + d]));
+  const cols = disps.filter(d => rows.some(t => cell[t.code + "|" + d]));
+  const max = Math.max(...Object.values(cell), 1);
+  const shade = v => { const k = Math.min(5, Math.ceil(v / max * 5)); return { bg: `var(--q${k})`, fg: `var(--qt${k})` }; };
+  return `<div class=scroll><table class=heat><tr><th></th>${cols.map(d => `<th>${esc(d)}</th>`).join("")}</tr>${rows.map(t =>
+    `<tr><th style="text-align:right">${esc(t.label)}</th>${cols.map(d => { const v = cell[t.code + "|" + d] || 0;
+      if (!v) return `<td class=z>·</td>`;
+      const sh = shade(v);
+      return `<td style="background:${sh.bg};color:${sh.fg}" data-tip="${esc(`${t.label} → ${d}: ${v}건`)}">${v}</td>`; }).join("")}</tr>`).join("")}</table></div>`;
+};
+
+let lastStats = null;
+const loadStats = async () => {
+  const box = document.getElementById("stats");
+  const params = new URLSearchParams([...new FormData(document.getElementById("sf"))].filter(([, v]) => v));
+  const res = await fetch("/api/stats?" + params);
+  if (!res.ok) { box.innerHTML = `<p class=review>통계를 불러오지 못했습니다.</p>`; return; }
+  const st = lastStats = await res.json();
+  const k = st.kpi;
+  if (!k.cases) { box.innerHTML = "<p class=empty>조건에 맞는 사건이 없습니다.</p>"; return; }
+  const pct = Math.round(k.classified / k.cases * 100);
+  box.innerHTML = `
+    <div class=kpis>
+      <div class=kpi><div class=k>사건</div><div class=v>${k.cases.toLocaleString("ko-KR")}건</div>
+        <div class=s>${k.no_year ? `연도 미상 ${k.no_year}건` : "&nbsp;"}</div></div>
+      <div class=kpi><div class=k>AI 분류 완료</div><div class=v>${pct}%</div>
+        <div class=meter><div style="width:${pct}%"></div></div><div class=s>${k.classified} / ${k.cases}건</div></div>
+      <div class=kpi><div class=k>지적금액 합계</div><div class=v>${k.amount ? eok(k.amount) : "-"}</div>
+        <div class=s>금액이 확인된 ${k.with_amount}건 기준</div></div>
+      <div class=kpi><div class=k>중징계·변상·고발 등</div><div class=v>${k.heavy}건</div>
+        <div class=s>${st.heavy_dispositions.join("·")}</div></div>
+      <div class=kpi><div class=k>업체 관련</div><div class=v>${k.vendor}건</div><div class=s>계약·유착이 쟁점인 사건</div></div>
+    </div>
+    <div class=cards>
+      <div class="card wide"><h2>연도별 사건 수</h2><p class=sub>주 위반유형(첫 번째) 그룹으로 나눔 · 감사 연도가 없으면 공개 연도</p><div id="c-year"></div></div>
+      <div class=card><h2>위반유형별 사건</h2><p class=sub>누르면 해당 사례 검색 · 한 사건이 여러 유형에 들어갈 수 있음</p><div id="c-type"></div></div>
+      <div class=card><h2>처분 종류</h2><p class=sub>원문 양식에서 읽은 값 · 누르면 해당 사례 검색</p><div id="c-disp"></div></div>
+      <div class="card wide"><h2>위반유형별 처분 수위</h2><p class=sub>같은 위반유형에 어떤 처분이 내려졌는지 (색이 진할수록 많음)</p><div id="c-heat"></div></div>
+      <div class=card><h2>조치기관 상위 10</h2><p class=sub>누르면 해당 기관 사례 검색</p><div id="c-agency"></div></div>
+      <div class=card><h2>지적금액 상위 사례</h2><p class=sub>AI가 원문에서 뽑은 금액 · 원문 확인 필요 · 누르면 상세</p><div id="c-top"></div></div>
+    </div>
+    <p class=note>금액·위반유형·기관유형은 AI 분류 결과입니다. 분류 전 사건은 '미분류'로 세며, 검수 전 값은 틀릴 수 있습니다.</p>`;
+
+  document.getElementById("c-year").innerHTML = yearChart(st.by_year, st.groups);
+
+  const typeEl = document.getElementById("c-type");
+  typeEl.innerHTML = st.by_type.length ? barList(st.by_type, {
+    name: r => r.label, sub: r => r.group, value: r => r.cases,
+    extra: r => r.amount ? eok(r.amount) : "",
+    tipOf: r => `<b>${r.label}</b> (${r.group})<br>${r.cases}건 · 금액 ${r.amount ? eok(r.amount) : "-"}<br>중징계·변상·고발 등 ${r.heavy}건`,
+  }) : "<p class=empty>AI 분류를 마친 사건이 없습니다. <code>bai classify</code>를 실행하세요.</p>";
+  wireBars(typeEl, st.by_type, r => goSearch({ violation_type: r.code }));
+
+  const dispEl = document.getElementById("c-disp");
+  dispEl.innerHTML = barList(st.by_disposition, { name: r => r.disposition, value: r => r.cases,
+    tipOf: r => `<b>${r.disposition}</b> ${r.cases}건` });
+  wireBars(dispEl, st.by_disposition, r => goSearch({ disposition: r.disposition }));
+
+  const types = (await (await fetch("/api/taxonomy")).json()).violation_types;
+  document.getElementById("c-heat").innerHTML = heatmap(st.matrix, types, st.by_disposition.map(d => d.disposition));
+
+  const agEl = document.getElementById("c-agency");
+  agEl.innerHTML = barList(st.by_agency, { name: r => r.agency, value: r => r.cases,
+    extra: r => r.amount ? eok(r.amount) : "", tipOf: r => `<b>${r.agency}</b> ${r.cases}건${r.amount ? " · " + eok(r.amount) : ""}` });
+  wireBars(agEl, st.by_agency, r => goSearch({ agency: r.agency }));
+
+  const topEl = document.getElementById("c-top");
+  topEl.innerHTML = st.top_amount.length ? `<table><tr><th>금액</th><th>사건</th><th>처분</th></tr>${st.top_amount.map(r =>
+    `<tr class=click data-id="${r.id}"><td style="white-space:nowrap;font-variant-numeric:tabular-nums">${eok(r.amount_krw)}</td>
+     <td>${esc(r.title)}<br><span class=meta>${esc(r.agency || "")}${r.published_on ? " · " + r.published_on : ""}</span></td>
+     <td class=meta>${esc((r.dispositions || []).join(", "))}</td></tr>`).join("")}</table>`
+    : "<p class=empty>금액이 확인된 사건이 없습니다. AI 분류 후 표시됩니다.</p>";
+  topEl.querySelectorAll("tr.click").forEach(tr => tr.onclick = async () => {
+    if (tr.nextElementSibling?.classList.contains("detail")) { tr.nextElementSibling.remove(); return; }
+    const c = await (await fetch("/api/cases/" + tr.dataset.id)).json();
+    tr.insertAdjacentHTML("afterend", `<tr class=detail><td colspan=3><p>${esc(c.summary || "")}</p>
+      <p><b>조치할 사항</b><br>${esc(c.action_text || "").replace(/\n/g, " ")}</p>
+      <details><summary class=meta>원문 보기</summary><pre>${esc(c.body)}</pre></details></td></tr>`);
+  });
 };
 </script>
 </body>

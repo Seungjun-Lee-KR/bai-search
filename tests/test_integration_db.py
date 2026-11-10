@@ -221,3 +221,41 @@ def test_duplicate_fills_missing_meta(conn, tmp_path):
     assert str(d["published_on"]) == "2022-02-02" and d["audit_name"] == "◎◎시 기관운영감사"
     c = conn.execute("SELECT published_on FROM cases WHERE document_id=%s", (out[0].document_id,)).fetchone()
     assert str(c["published_on"]) == "2022-02-02"
+
+
+def test_stats(conn):
+    from bai_search.stats import collect_stats
+    from bai_search.search import Filters
+
+    conn.execute("""UPDATE cases SET violation_types = ARRAY['EMBEZZLE_FUNDS','FALSE_CLAIM'],
+                        amount_krw = 300000000, audit_year = 2024, agency_type = '공공기관',
+                        summary = '요약', vendor_related = false
+                    WHERE title LIKE '%%횡령%%'""")
+    conn.execute("""UPDATE cases SET violation_types = ARRAY['SPLIT_CONTRACT'], amount_krw = 50000000,
+                        audit_year = 2022, agency_type = '지방자치단체', summary = '요약', vendor_related = true
+                    WHERE title LIKE '%%분할발주%%'""")
+    st = collect_stats(conn)
+    k = st["kpi"]
+    assert (k["cases"], k["classified"], k["amount"], k["heavy"], k["vendor"]) == (3, 2, 350_000_000, 1, 1)
+    assert {r["code"]: r["cases"] for r in st["by_type"]} == {
+        "EMBEZZLE_FUNDS": 1, "FALSE_CLAIM": 1, "SPLIT_CONTRACT": 1}
+    years = {y["year"]: y for y in st["by_year"]}
+    assert sorted(years) == [2022, 2023, 2024]          # 빈 해(2023)도 0으로 채움
+    assert years[2024]["횡령·유용"] == 1 and years[2022]["계약 유착"] == 1 and years[2023]["total"] == 0
+    assert [d["disposition"] for d in st["by_disposition"]] == ["징계요구", "주의요구", "통보"]
+    assert st["top_amount"][0]["amount_krw"] == 300_000_000
+    assert {(m["code"], m["disposition"]) for m in st["matrix"]} == {
+        ("EMBEZZLE_FUNDS", "징계요구"), ("FALSE_CLAIM", "징계요구"), ("SPLIT_CONTRACT", "주의요구")}
+
+    f = Filters(year_from=2024)
+    f.agency_type = "공공기관"
+    assert collect_stats(conn, f)["kpi"]["cases"] == 1
+
+
+def test_stats_api(conn):
+    from fastapi.testclient import TestClient
+    from bai_search.api import app
+
+    r = TestClient(app).get("/api/stats", params={"agency_type": "지방자치단체"}).json()
+    assert r["kpi"]["cases"] == 0 and r["by_year"] == []
+    assert TestClient(app).get("/api/stats").json()["kpi"]["cases"] == 3

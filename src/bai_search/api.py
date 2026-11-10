@@ -155,3 +155,14 @@ def recent(limit: int = Query(20, le=100)):
             (limit,),
         ).fetchall()
     return {"documents": rows}
+
+
+@app.get("/api/stats")
+def stats(year_from: int | None = None, year_to: int | None = None,
+          agency_type: str | None = None, disposition: str | None = None):
+    from .stats import collect_stats
+
+    f = Filters(year_from=year_from, year_to=year_to, disposition=disposition)
+    f.agency_type = agency_type
+    with db.connect() as conn:
+        return collect_stats(conn, f)
