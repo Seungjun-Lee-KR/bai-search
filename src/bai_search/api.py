@@ -79,8 +79,16 @@ def ask_endpoint(req: AskRequest):
         raise HTTPException(400, "질문을 입력하세요.")
     f = Filters(req.violation_type, req.disposition, req.year_from, req.year_to,
                 req.agency, req.min_amount)
+    from .classify import explain_api_error
+
     with db.connect() as conn:
-        ans = ask(conn, req.question, f, auto=req.auto)
+        try:
+            ans = ask(conn, req.question, f, auto=req.auto)
+        except Exception as e:
+            msg = explain_api_error(e)
+            if msg is None:
+                raise
+            raise HTTPException(503, msg)
     return asdict(ans)
 
 

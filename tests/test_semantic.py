@@ -76,3 +76,16 @@ def test_parse_response_numbers_sources_once():
 def test_parse_response_refusal():
     ans = parse_response(NS(stop_reason="refusal", content=[]), CASES)
     assert ans.refused and ans.parts
+
+
+def test_explain_api_error_messages():
+    import anthropic
+    import httpx
+    from bai_search.classify import explain_api_error
+
+    assert "API 키가 없습니다" in explain_api_error(TypeError("Could not resolve authentication method"))
+    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    err = anthropic.AuthenticationError("bad", response=httpx.Response(401, request=req), body=None)
+    assert "올바르지 않습니다" in explain_api_error(err)
+    assert "연결하지 못했습니다" in explain_api_error(anthropic.APIConnectionError(request=req))
+    assert explain_api_error(KeyError("x")) is None

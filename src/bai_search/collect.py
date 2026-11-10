@@ -249,7 +249,11 @@ def process_file(conn, path: Path, meta: FileMeta, *, embed: bool = True,
     if embed:
         try:
             embed_cases(conn, case_ids)
-        except Exception as e:  # 모델 미설치 등: 저장은 유지하고 나중에 bai embed
+        except ModuleNotFoundError:
+            conn.rollback()
+            out.warnings.append('임베딩 생략: 의미 검색 모델이 설치되지 않았습니다. '
+                                'pip install -e ".[local]" 후 bai embed 를 실행하세요. (키워드 검색은 지금도 됩니다)')
+        except Exception as e:  # 저장은 유지하고 나중에 bai embed
             conn.rollback()
             out.warnings.append(f"임베딩 생략({type(e).__name__}: {e}). 나중에 'bai embed'를 실행하세요.")
     if classify:
@@ -282,7 +286,9 @@ def classify_cases(conn, case_ids: list[int]) -> list[str]:
         try:
             result = classify_case(row["title"], row["body"], known=known_fields(row))
         except Exception as e:
-            warnings.append(f"#{cid} 분류 실패({type(e).__name__}: {e}). 나중에 'bai classify'로 다시 시도하세요.")
+            from .classify import explain_api_error
+            msg = explain_api_error(e) or f"{type(e).__name__}: {e}"
+            warnings.append(f"#{cid} 분류 실패 — {msg} 나중에 'bai classify'로 다시 시도하세요.")
             continue
         db.save_classification(conn, cid, result)
         conn.commit()

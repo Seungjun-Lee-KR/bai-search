@@ -67,6 +67,29 @@ class ClassificationRefused(Exception):
     pass
 
 
+NO_KEY_MESSAGE = (".env 파일의 ANTHROPIC_API_KEY에 Anthropic API 키를 넣으세요. "
+                  "키는 https://console.anthropic.com 에서 발급합니다.")
+
+
+def explain_api_error(e: Exception) -> str | None:
+    """Claude API 호출 실패를 사람이 읽을 안내로. 해당 없으면 None."""
+    import anthropic
+
+    if isinstance(e, TypeError) and "authentication" in str(e):
+        return "API 키가 없습니다. " + NO_KEY_MESSAGE
+    if isinstance(e, anthropic.AuthenticationError):
+        return "API 키가 올바르지 않습니다. " + NO_KEY_MESSAGE
+    if isinstance(e, anthropic.PermissionDeniedError):
+        return "이 API 키로는 해당 모델을 쓸 수 없습니다. 콘솔에서 권한·결제 상태를 확인하세요."
+    if isinstance(e, anthropic.RateLimitError):
+        return "요청이 너무 많습니다. 잠시 뒤 다시 시도하세요."
+    if isinstance(e, anthropic.APIConnectionError):
+        return "Anthropic 서버에 연결하지 못했습니다. 인터넷·방화벽(api.anthropic.com) 설정을 확인하세요."
+    if isinstance(e, anthropic.APIStatusError):
+        return f"Claude API 오류({e.status_code}): {e.message}"
+    return None
+
+
 def known_fields(row: dict) -> dict[str, str]:
     """처분요구서 양식에서 이미 확정된 값. AI에 참고로 넘깁니다."""
     out = {}

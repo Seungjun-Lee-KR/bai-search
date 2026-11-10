@@ -75,7 +75,7 @@ def cmd_watch(args) -> None:
 
 def cmd_classify(args) -> None:
     from . import db
-    from .classify import ClassificationRefused, classify_case, known_fields
+    from .classify import ClassificationRefused, classify_case, explain_api_error, known_fields
 
     with db.connect() as conn:
         rows = db.pending_cases(conn, args.limit)
@@ -86,6 +86,11 @@ def cmd_classify(args) -> None:
             except (ClassificationRefused, ValueError) as e:
                 print(f"[검수 필요] #{row['id']} {row['title'][:40]}: {e}")
                 continue
+            except Exception as e:
+                msg = explain_api_error(e)
+                if msg is None:
+                    raise
+                sys.exit(f"[중단] {msg}")
             db.save_classification(conn, row["id"], result)
             conn.commit()
             print(f"[분류] #{row['id']} {row['title'][:40]} -> {', '.join(result.violation_types)}")
@@ -96,7 +101,10 @@ def cmd_embed(args) -> None:
     from . import db
     from .embed import chunk_case, get_embedder, to_pgvector
 
-    emb = get_embedder()
+    try:
+        emb = get_embedder()
+    except ModuleNotFoundError:
+        sys.exit('[중단] 의미 검색 모델이 설치되지 않았습니다. pip install -e ".[local]" 를 먼저 실행하세요.')
     with db.connect() as conn:
         if args.all:
             conn.execute("DELETE FROM case_chunks")
@@ -114,8 +122,16 @@ def cmd_ask(args) -> None:
     from . import db
     from .ask import ask
 
+    from .classify import explain_api_error
+
     with db.connect() as conn:
-        ans = ask(conn, args.question, model=args.model, auto=not args.no_auto)
+        try:
+            ans = ask(conn, args.question, model=args.model, auto=not args.no_auto)
+        except Exception as e:
+            msg = explain_api_error(e)
+            if msg is None:
+                raise
+            sys.exit(f"[중단] {msg}")
     if ans.conditions:
         print(("[조건에 맞는 사례가 없어 조건 없이 검색] " if ans.relaxed else "[적용 조건] ")
               + " · ".join(ans.conditions) + "\n")
