@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>감사원 결정례 검색</title>
+<style>
+  :root { --bg:#fafafa; --fg:#1d1d1f; --muted:#6b6b70; --line:#e2e2e6; --accent:#1f4fd1; --warn:#b45309; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141416; --fg:#ececf0; --muted:#9a9aa2; --line:#2c2c31; --accent:#7ea2ff; --warn:#f0a35a; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 system-ui, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+  main { max-width:960px; margin:0 auto; padding:24px 16px; }
+  h1 { font-size:20px; margin:0 0 16px; }
+  form { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; margin-bottom:20px; }
+  input, select, button { font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:inherit; }
+  input[name=q] { grid-column:1/-1; }
+  button { background:var(--accent); color:#fff; border:0; cursor:pointer; }
+  .item { border-top:1px solid var(--line); padding:14px 0; cursor:pointer; }
+  .item h2 { font-size:16px; margin:0 0 4px; }
+  .meta { color:var(--muted); font-size:13px; }
+  .tag { display:inline-block; font-size:12px; border:1px solid var(--line); border-radius:4px; padding:0 6px; margin-right:4px; }
+  .review { color:var(--warn); }
+  pre { white-space:pre-wrap; font:inherit; }
+</style>
+</head>
+<body>
+<main>
+  <h1>감사원 결정례 검색</h1>
+  <form id="f">
+    <input name="q" placeholder="검색어 (예: 수의계약 분할, 업무추진비)">
+    <select name="violation_type"><option value="">위반유형 전체</option></select>
+    <select name="disposition"><option value="">처분 전체</option></select>
+    <input name="agency" placeholder="기관명">
+    <input name="year_from" type="number" placeholder="연도부터">
+    <input name="year_to" type="number" placeholder="연도까지">
+    <input name="min_amount" type="number" placeholder="최소 금액(원)">
+    <button>검색</button>
+  </form>
+  <div id="out"></div>
+</main>
+<script>
+const labels = {};
+const won = n => n == null ? "" : n.toLocaleString("ko-KR") + "원";
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+fetch("/api/taxonomy").then(r => r.json()).then(t => {
+  const vs = document.querySelector("[name=violation_type]");
+  t.violation_types.forEach(v => { labels[v.code] = v.label; vs.add(new Option(`${v.group} · ${v.label}`, v.code)); });
+  const ds = document.querySelector("[name=disposition]");
+  t.dispositions.forEach(d => ds.add(new Option(d, d)));
+});
+document.getElementById("f").addEventListener("submit", async e => {
+  e.preventDefault();
+  const params = new URLSearchParams([...new FormData(e.target)].filter(([, v]) => v));
+  const { results } = await (await fetch("/api/search?" + params)).json();
+  const out = document.getElementById("out");
+  out.innerHTML = results.length ? "" : "<p class=meta>결과가 없습니다.</p>";
+  for (const r of results) {
+    const div = document.createElement("div");
+    div.className = "item";
+    div.innerHTML = `<h2>${esc(r.title)}</h2>
+      <div class=meta>${esc(r.agency)} · ${r.audit_year ?? ""} · ${won(r.amount_krw)}
+        ${r.needs_review ? "<span class=review>· 분류 검수 필요</span>" : ""}</div>
+      <div>${(r.violation_types||[]).map(c => `<span class=tag>${esc(labels[c]||c)}</span>`).join("")}
+           ${(r.dispositions||[]).map(d => `<span class=tag>${esc(d)}</span>`).join("")}</div>
+      <p>${esc(r.summary)}</p>`;
+    div.onclick = async () => {
+      const c = await (await fetch("/api/cases/" + r.id)).json();
+      div.innerHTML += `<p class=meta>관련 법령: ${esc((c.related_laws||[]).join(", "))}</p>
+        <p class=meta>AI 요약은 참고용입니다. 아래 원문을 확인하십시오.</p><pre>${esc(c.body)}</pre>`;
+      div.onclick = null;
+    };
+    out.appendChild(div);
+  }
+});
+</script>
+</body>
+</html>
