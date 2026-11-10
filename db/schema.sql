@@ -30,8 +30,7 @@ CREATE TABLE IF NOT EXISTS cases (
     summary           TEXT,
     body              TEXT NOT NULL,      -- 해당 지적사항 원문
     confidence        REAL,
-    needs_review      BOOLEAN DEFAULT TRUE,
-    embedding         vector(1024)        -- 2단계: 의미 검색용
+    needs_review      BOOLEAN DEFAULT TRUE
 );
 
 CREATE INDEX IF NOT EXISTS cases_body_trgm  ON cases USING gin (body gin_trgm_ops);
@@ -45,3 +44,16 @@ ALTER TABLE cases ADD COLUMN IF NOT EXISTS responsible_agency TEXT;  -- 소관�
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS action_agency      TEXT;  -- 조치기관
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS action_text        TEXT;  -- 조치할 사항
 CREATE INDEX IF NOT EXISTS cases_title_eq ON cases (title);
+
+-- 의미 검색용 조각(청크)과 임베딩
+ALTER TABLE cases DROP COLUMN IF EXISTS embedding;
+CREATE TABLE IF NOT EXISTS case_chunks (
+    id          BIGSERIAL PRIMARY KEY,
+    case_id     BIGINT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    chunk_no    INT NOT NULL,
+    text        TEXT NOT NULL,
+    embedding   vector(1024) NOT NULL,
+    embed_model TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS case_chunks_case ON case_chunks (case_id);
+CREATE INDEX IF NOT EXISTS case_chunks_hnsw ON case_chunks USING hnsw (embedding vector_cosine_ops);

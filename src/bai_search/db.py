@@ -118,3 +118,35 @@ def related_cases(conn, case_id: int):
            WHERE c1.id = %s ORDER BY c2.id""",
         (case_id,),
     ).fetchall()
+
+
+LIST_COLUMNS = """id, title, agency, action_agency, audit_year, violation_types, dispositions,
+                  amount_krw, summary, needs_review"""
+
+
+def rows_by_ids(conn, ids: list[int]):
+    """ids 순서를 지켜 목록용 행을 돌려줍니다."""
+    if not ids:
+        return []
+    rows = conn.execute(f"SELECT {LIST_COLUMNS} FROM cases WHERE id = ANY(%s)", (ids,)).fetchall()
+    by_id = {r["id"]: r for r in rows}
+    return [by_id[i] for i in ids if i in by_id]
+
+
+def cases_to_embed(conn, limit: int | None):
+    return conn.execute(
+        """SELECT id, title, body, action_text FROM cases c
+           WHERE NOT EXISTS (SELECT 1 FROM case_chunks k WHERE k.case_id = c.id)
+           ORDER BY id LIMIT %s""",
+        (limit,),
+    ).fetchall()
+
+
+def save_chunks(conn, case_id: int, texts: list[str], vectors: list[str], model: str) -> None:
+    conn.execute("DELETE FROM case_chunks WHERE case_id = %s", (case_id,))
+    with conn.cursor() as cur:
+        cur.executemany(
+            """INSERT INTO case_chunks (case_id, chunk_no, text, embedding, embed_model)
+               VALUES (%s, %s, %s, %s::vector, %s)""",
+            [(case_id, i, t, v, model) for i, (t, v) in enumerate(zip(texts, vectors))],
+        )

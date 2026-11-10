@@ -15,7 +15,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "httpx>=0.27"]
+local = ["sentence-transformers>=3.0"]   # EMBED_BACKEND=local (권장, 원문 외부 전송 없음)
+voyage = ["voyageai>=0.3"]               # EMBED_BACKEND=voyage
 
 [project.scripts]
 bai = "bai_search.cli:main"

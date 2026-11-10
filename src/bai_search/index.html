@@ -21,11 +21,32 @@
   .tag { display:inline-block; font-size:12px; border:1px solid var(--line); border-radius:4px; padding:0 6px; margin-right:4px; }
   .review { color:var(--warn); }
   pre { white-space:pre-wrap; font:inherit; }
+  .tabs { display:flex; gap:4px; margin-bottom:16px; border-bottom:1px solid var(--line); }
+  .tabs button { background:transparent; color:var(--muted); border-radius:0; border-bottom:2px solid transparent; }
+  .tabs button.on { color:var(--fg); border-bottom-color:var(--accent); }
+  .hidden { display:none; }
+  #af { grid-template-columns:1fr; }
+  #af button { justify-self:start; padding:8px 24px; }
+  textarea { font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:inherit; width:100%; min-height:72px; }
+  #answer p { margin:0 0 8px; }
+  sup a { color:var(--accent); text-decoration:none; font-size:11px; }
+  .src { border-left:3px solid var(--line); padding:4px 10px; margin:8px 0; font-size:14px; }
+  .src:target { border-left-color:var(--accent); }
 </style>
 </head>
 <body>
 <main>
   <h1>감사원 결정례 검색</h1>
+  <div class="tabs"><button id="t-search" class="on">검색</button><button id="t-ask">질문하기</button></div>
+  <section id="p-ask" class="hidden">
+    <form id="af">
+      <textarea name="question" placeholder="예: 수의계약을 쪼개서 특정업체에 몰아준 사례와 처분 수위를 알려줘"></textarea>
+      <button>질문</button>
+    </form>
+    <p class="meta">답변은 검색된 사례 원문만 근거로 만들며, 문장마다 근거 번호가 붙습니다. AI 답변은 참고용이므로 원문을 확인하십시오.</p>
+    <div id="answer"></div>
+  </section>
+  <section id="p-search">
   <form id="f">
     <input name="q" placeholder="검색어 (예: 수의계약 분할, 업무추진비)">
     <select name="violation_type"><option value="">위반유형 전체</option></select>
@@ -37,6 +58,7 @@
     <button>검색</button>
   </form>
   <div id="out"></div>
+  </section>
 </main>
 <script>
 const labels = {};
@@ -75,6 +97,30 @@ document.getElementById("f").addEventListener("submit", async e => {
     };
     out.appendChild(div);
   }
+});
+const tab = on => {
+  for (const k of ["search", "ask"]) {
+    document.getElementById("t-" + k).classList.toggle("on", k === on);
+    document.getElementById("p-" + k).classList.toggle("hidden", k !== on);
+  }
+};
+document.getElementById("t-search").onclick = () => tab("search");
+document.getElementById("t-ask").onclick = () => tab("ask");
+document.getElementById("af").addEventListener("submit", async e => {
+  e.preventDefault();
+  const question = new FormData(e.target).get("question").trim();
+  if (!question) return;
+  const box = document.getElementById("answer");
+  box.innerHTML = "<p class=meta>사례를 찾고 답변을 만드는 중입니다…</p>";
+  const res = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ question }) });
+  if (!res.ok) { box.innerHTML = `<p class=review>오류: ${esc((await res.json()).detail || res.status)}</p>`; return; }
+  const a = await res.json();
+  const body = a.parts.map(p => esc(p.text) + p.refs.map(n => `<sup><a href="#src-${n}">[${n}]</a></sup>`).join("")).join("");
+  const paras = body.split(/\n{2,}/).map(t => `<p>${t.replace(/\n/g, "<br>")}</p>`).join("");
+  const srcs = a.sources.map(s => `<div class=src id="src-${s.n}"><b>[${s.n}]</b> #${s.case_id} ${esc(s.title)}<br>“${esc(s.cited_text)}”</div>`).join("");
+  const cases = a.cases.map(c => `<span class=tag>#${c.id} ${esc(c.title)} · ${esc(c.action_agency)}</span>`).join(" ");
+  box.innerHTML = paras + (srcs ? "<h2>근거 원문</h2>" + srcs : "") + (cases ? `<p class=meta>검토한 사례: ${cases}</p>` : "");
 });
 </script>
 </body>

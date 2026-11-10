@@ -2,6 +2,8 @@
 
   bai ingest data/raw --source audit_report   # 폴더 안 PDF/HWP/HWPX를 읽어 DB에 저장
   bai classify --limit 50                     # 아직 분류 안 된 사건을 Claude로 분류
+  bai embed                                   # 의미 검색용 임베딩 생성
+  bai ask "수의계약을 쪼개서 특정업체에 준 사례"   # 자연어 질문
   bai serve                                   # 검색 웹 서버 실행 (http://localhost:8000)
 """
 from __future__ import annotations
@@ -60,6 +62,38 @@ def cmd_classify(args) -> None:
     print(f"완료: {len(rows)}건 처리")
 
 
+def cmd_embed(args) -> None:
+    from . import db
+    from .embed import chunk_case, get_embedder, to_pgvector
+
+    emb = get_embedder()
+    with db.connect() as conn:
+        if args.all:
+            conn.execute("DELETE FROM case_chunks")
+        rows = db.cases_to_embed(conn, args.limit)
+        for row in rows:
+            texts = chunk_case(row["title"], row["body"], row["action_text"])
+            vectors = [to_pgvector(v) for v in emb.embed(texts, "document")]
+            db.save_chunks(conn, row["id"], texts, vectors, emb.name)
+            conn.commit()
+            print(f"[임베딩] #{row['id']} {row['title'][:40]}: 조각 {len(texts)}개")
+    print(f"완료: {len(rows)}건 ({emb.name})")
+
+
+def cmd_ask(args) -> None:
+    from . import db
+    from .ask import ask
+
+    with db.connect() as conn:
+        ans = ask(conn, args.question, model=args.model)
+    for part in ans.parts:
+        refs = "".join(f"[{n}]" for n in part["refs"])
+        print(part["text"] + refs, end="")
+    print("\n\n근거")
+    for s in ans.sources:
+        print(f"[{s.n}] #{s.case_id} {s.title}\n    \"{s.cited_text}\"")
+
+
 def cmd_serve(args) -> None:
     import uvicorn
 
@@ -81,6 +115,16 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--limit", type=int, default=20)
     s.add_argument("--model", default=None, help="기본값은 환경변수 CLASSIFY_MODEL")
     s.set_defaults(func=cmd_classify)
+
+    s = sub.add_parser("embed", help="의미 검색용 임베딩 생성")
+    s.add_argument("--limit", type=int, default=None)
+    s.add_argument("--all", action="store_true", help="기존 임베딩을 지우고 전부 다시 생성")
+    s.set_defaults(func=cmd_embed)
+
+    s = sub.add_parser("ask", help="자연어로 질문하고 원문 인용과 함께 답 받기")
+    s.add_argument("question")
+    s.add_argument("--model", default=None, help="기본값은 환경변수 ASK_MODEL")
+    s.set_defaults(func=cmd_ask)
 
     s = sub.add_parser("serve", help="검색 웹 서버 실행")
     s.add_argument("--host", default="127.0.0.1")

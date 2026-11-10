@@ -15,7 +15,10 @@
 | `src/bai_search/taxonomy.py` | 위반유형·처분 분류표 (실무에 맞게 계속 수정) |
 | `src/bai_search/classify.py` | Claude로 기관·금액·위반유형·처분·법령 구조화 |
 | `src/bai_search/db.py`, `db/schema.sql` | PostgreSQL 저장·검색 (pg_trgm, pgvector) |
-| `src/bai_search/api.py`, `index.html` | 검색 API와 웹 화면 |
+| `src/bai_search/embed.py` | 임베딩(local bge-m3 / voyage / hash)과 청크 분할 |
+| `src/bai_search/search.py` | 키워드 + 의미 혼합 검색 (RRF) |
+| `src/bai_search/ask.py` | 자연어 질문 → 검색 → Claude가 원문 인용하며 답변 |
+| `src/bai_search/api.py`, `index.html` | 검색 API와 웹 화면 (검색 / 질문하기 탭) |
 | `src/bai_search/cli.py` | `bai ingest / classify / serve` 명령 |
 
 ## 시작하기
@@ -35,9 +38,30 @@ bai ingest data/raw --source audit_report
 # 4) 분류 (처음엔 적은 건수로 결과 확인)
 bai classify --limit 20
 
-# 5) 검색 화면
+# 5) 의미 검색용 임베딩
+pip install -e '.[local]'   # 처음 한 번, BAAI/bge-m3 모델(약 2GB)을 내려받음
+bai embed
+
+# 6) 질문 (명령줄)
+bai ask "이미 계약에 포함된 일을 추가 과업으로 돈 더 준 사례"
+
+# 7) 검색 화면
 bai serve   # http://localhost:8000
 ```
+
+## 의미 검색과 자연어 질문
+
+- **혼합 검색:** 검색어가 있으면 키워드 검색과 의미 검색 결과를 순위 결합(RRF)합니다.
+  "보관하던 돈을 직원이 빼돌린" 처럼 원문과 다른 표현으로 물어도 찾도록 하는 것이 목적입니다.
+- **임베딩 방식 (`EMBED_BACKEND`)**
+  - `local` (기본, 권장): `BAAI/bge-m3`를 PC에서 실행. 원문이 외부로 나가지 않습니다.
+  - `voyage`: Voyage AI API. 원문이 외부로 전송됩니다.
+  - `hash`: 모델 없이 글자 조각 일치로 계산. 테스트·오프라인용이며 뜻은 이해하지 못합니다.
+  - 방식을 바꾸면 `bai embed --all`로 다시 만드세요.
+- **질문하기:** 혼합 검색 상위 6건의 원문을 Claude에 보내고, Claude의 인용(citations) 기능으로
+  답변 문장마다 근거 원문 위치를 붙입니다. 근거가 없으면 "찾지 못했습니다"라고 답하도록 지시합니다.
+  질문 1건당 원문 약 3~5만 자가 전송됩니다. 기본 모델은 `ASK_MODEL=claude-opus-5-5`이며,
+  안전 분류기가 답변을 거절하면 서버에서 다른 모델로 다시 시도하는 기능(fallbacks)을 켜 두었습니다.
 
 분류 모델은 `.env`의 `CLASSIFY_MODEL`로 바꿉니다. 기본값은 `claude-opus-5-5`이고,
 수천 건을 돌릴 때 비용을 줄이려면 `claude-haiku-5-5`로 바꿔 품질을 비교해 보세요.
@@ -56,7 +80,8 @@ bai serve   # http://localhost:8000
 
 - [x] 1단계: 파서, 사건 분할, 분류, 키워드·필터 검색, 웹 화면
 - [ ] 감사원 홈페이지 자동 수집기 (이용 조건 확인 후)
-- [ ] 의미 검색(임베딩) + 자연어 질의응답(원문 인용 필수)
+- [x] 의미 검색(임베딩) + 자연어 질의응답(원문 인용 필수)
+- [ ] 질문에서 연도·기관·금액 조건 자동 추출
 - [ ] 유사사례 추천, 위반유형별 통계 대시보드
 - [ ] 감사 착안사항 체크리스트 생성
 - [ ] 국가법령정보센터 Open API로 법조문 연결
@@ -65,4 +90,6 @@ bai serve   # http://localhost:8000
 
 ```bash
 pytest -q
+# 실제 DB(pgvector) 통합 테스트
+TEST_DATABASE_URL=postgresql://bai:bai@localhost:5432/bai_test pytest tests/test_integration_db.py
 ```
