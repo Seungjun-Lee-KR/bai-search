@@ -65,7 +65,11 @@ document.getElementById("f").addEventListener("submit", async e => {
       <p>${esc(r.summary)}</p>`;
     div.onclick = async () => {
       const c = await (await fetch("/api/cases/" + r.id)).json();
-      div.innerHTML += `<p class=meta>관련 법령: ${esc((c.related_laws||[]).join(", "))}</p>
+      const rel = (c.related||[]).map(x => `#${x.id} ${esc(x.action_agency)}`).join(", ");
+      div.innerHTML += `<p class=meta>소관기관: ${esc(c.responsible_agency)} · 조치기관: ${esc(c.action_agency)}</p>
+        <p><b>조치할 사항</b><br>${esc(c.action_text).replace(/\n/g, " ")}</p>
+        ${rel ? `<p class=meta>같은 지적의 다른 기관 처분: ${rel}</p>` : ""}
+        <p class=meta>관련 법령: ${esc((c.related_laws||[]).join(", "))}</p>
         <p class=meta>AI 요약은 참고용입니다. 아래 원문을 확인하십시오.</p><pre>${esc(c.body)}</pre>`;
       div.onclick = null;
     };

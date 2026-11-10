@@ -30,25 +30,33 @@ def insert_document(conn, *, source: str, title: str, full_text: str,
     return row["id"]
 
 
-def insert_case(conn, *, document_id: int, title: str, body: str) -> int:
+def insert_case(conn, *, document_id: int, seg) -> int:
     row = conn.execute(
-        "INSERT INTO cases (document_id, title, body) VALUES (%s, %s, %s) RETURNING id",
-        (document_id, title, body),
+        """INSERT INTO cases (document_id, title, body, dispositions, agency,
+                              responsible_agency, action_agency, action_text)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+        (document_id, seg.title, seg.body, seg.dispositions,
+         seg.action_agency or seg.responsible_agency,
+         seg.responsible_agency, seg.action_agency, seg.action_text),
     ).fetchone()
     return row["id"]
 
 
 def pending_cases(conn, limit: int):
     return conn.execute(
-        "SELECT id, title, body FROM cases WHERE summary IS NULL ORDER BY id LIMIT %s",
+        """SELECT id, title, body, dispositions, responsible_agency, action_agency, action_text
+           FROM cases WHERE summary IS NULL ORDER BY id LIMIT %s""",
         (limit,),
     ).fetchall()
 
 
 def save_classification(conn, case_id: int, c) -> None:
     conn.execute(
-        """UPDATE cases SET agency=%s, agency_type=%s, audit_year=%s, violation_types=%s,
-               dispositions=%s, amount_krw=%s, contract_method=%s, vendor_related=%s,
+        # 양식에서 읽은 기관·처분이 있으면 AI 추정값으로 덮어쓰지 않음
+        """UPDATE cases SET agency=COALESCE(agency, %s), agency_type=%s, audit_year=%s,
+               violation_types=%s,
+               dispositions=CASE WHEN cardinality(dispositions) > 0 THEN dispositions ELSE %s END,
+               amount_krw=%s, contract_method=%s, vendor_related=%s,
                related_laws=%s, summary=%s, confidence=%s, needs_review=%s
            WHERE id=%s""",
         (c.agency, c.agency_type, c.audit_year, list(c.violation_types), list(c.dispositions),
@@ -100,3 +108,13 @@ def get_case(conn, case_id: int):
            FROM cases c JOIN documents d ON d.id = c.document_id WHERE c.id = %s""",
         (case_id,),
     ).fetchone()
+
+
+def related_cases(conn, case_id: int):
+    """같은 지적을 여러 기관에 처분한 경우(제목 동일)를 묶어 보여 줍니다."""
+    return conn.execute(
+        """SELECT c2.id, c2.title, c2.action_agency, c2.dispositions
+           FROM cases c1 JOIN cases c2 ON c2.title = c1.title AND c2.id <> c1.id
+           WHERE c1.id = %s ORDER BY c2.id""",
+        (case_id,),
+    ).fetchall()

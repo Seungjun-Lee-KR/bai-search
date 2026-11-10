@@ -30,25 +30,27 @@ def cmd_ingest(args) -> None:
             except ParseError as e:
                 print(f"[건너뜀] {path.name}: {e}")
                 continue
-            doc_id = db.insert_document(conn, source=args.source, title=path.stem,
+            segments = split_cases(text)
+            title = segments[0].title if len(segments) == 1 else path.stem
+            doc_id = db.insert_document(conn, source=args.source, title=title,
                                         full_text=text, file_path=str(path))
             conn.execute("DELETE FROM cases WHERE document_id = %s", (doc_id,))
-            segments = split_cases(text)
             for seg in segments:
-                db.insert_case(conn, document_id=doc_id, title=seg.title, body=seg.body)
+                db.insert_case(conn, document_id=doc_id, seg=seg)
             conn.commit()
             print(f"[저장] {path.name}: 사건 {len(segments)}건")
 
 
 def cmd_classify(args) -> None:
     from . import db
-    from .classify import ClassificationRefused, classify_case
+    from .classify import ClassificationRefused, classify_case, known_fields
 
     with db.connect() as conn:
         rows = db.pending_cases(conn, args.limit)
         for row in rows:
             try:
-                result = classify_case(row["title"], row["body"], model=args.model)
+                result = classify_case(row["title"], row["body"], model=args.model,
+                                       known=known_fields(row))
             except (ClassificationRefused, ValueError) as e:
                 print(f"[검수 필요] #{row['id']} {row['title'][:40]}: {e}")
                 continue

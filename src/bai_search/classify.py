@@ -46,6 +46,8 @@ SYSTEM_PROMPT = f"""당신은 감사원 감사결과를 분석하는 감사 실�
 - 금액은 원 단위 정수로 바꿉니다. 예: '3억 2천만 원' -> 320000000.
 - 개인 이름은 요약에 쓰지 말고 직급이나 역할(예: 회계담당 6급)로 씁니다.
 - 판단이 애매하면 confidence를 0.6 아래로 줍니다.
+- <확정정보>는 문서 양식에서 읽은 값이므로 그대로 따릅니다.
+- 원문의 업체명·인명은 공개 시 지워져 빈칸이나 A, B로 남아 있습니다. 추측해서 채우지 않습니다.
 
 위반유형 분류표
 {taxonomy_prompt()}
@@ -65,12 +67,35 @@ class ClassificationRefused(Exception):
     pass
 
 
-def classify_case(title: str, body: str, client=None, model: str | None = None) -> CaseExtraction:
+def known_fields(row: dict) -> dict[str, str]:
+    """처분요구서 양식에서 이미 확정된 값. AI에 참고로 넘깁니다."""
+    out = {}
+    if row.get("dispositions"):
+        out["처분"] = ", ".join(row["dispositions"])
+    if row.get("responsible_agency"):
+        out["소관기관"] = row["responsible_agency"]
+    if row.get("action_agency"):
+        out["조치기관"] = row["action_agency"]
+    if row.get("action_text"):
+        out["조치할 사항"] = row["action_text"]
+    return out
+
+
+def build_user_message(title: str, body: str, known: dict[str, str] | None = None) -> str:
+    parts = [f"<제목>{title}</제목>"]
+    if known:
+        meta = "\n".join(f"{k}: {v}" for k, v in known.items())
+        parts.append(f"<확정정보>\n{meta}\n</확정정보>")
+    parts.append(f"<원문>\n{body}\n</원문>")
+    return "\n".join(parts)
+
+
+def classify_case(title: str, body: str, client=None, model: str | None = None,
+                  known: dict[str, str] | None = None) -> CaseExtraction:
     import anthropic
 
     client = client or anthropic.Anthropic()
     model = model or os.environ.get("CLASSIFY_MODEL", DEFAULT_MODEL)
-    body = redact(body)
     if len(body) > MAX_BODY_CHARS:
         raise ValueError(f"본문이 너무 깁니다({len(body)}자). 사건 분할을 먼저 확인하세요.")
 
@@ -80,7 +105,7 @@ def classify_case(title: str, body: str, client=None, model: str | None = None) 
         system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
         messages=[{
             "role": "user",
-            "content": f"<제목>{title}</제목>\n<원문>\n{body}\n</원문>",
+            "content": redact(build_user_message(title, body, known)),
         }],
         output_config={"effort": "low"},
         output_format=CaseExtraction,

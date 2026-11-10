@@ -39,3 +39,9 @@ CREATE INDEX IF NOT EXISTS cases_title_trgm ON cases USING gin (title gin_trgm_o
 CREATE INDEX IF NOT EXISTS cases_vtypes     ON cases USING gin (violation_types);
 CREATE INDEX IF NOT EXISTS cases_disp       ON cases USING gin (dispositions);
 CREATE INDEX IF NOT EXISTS cases_year       ON cases (audit_year);
+
+-- 처분요구서 양식에서 바로 읽은 값 (AI 추정 아님)
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS responsible_agency TEXT;  -- 소관기관
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS action_agency      TEXT;  -- 조치기관
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS action_text        TEXT;  -- 조치할 사항
+CREATE INDEX IF NOT EXISTS cases_title_eq ON cases (title);

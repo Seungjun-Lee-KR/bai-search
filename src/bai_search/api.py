@@ -50,7 +50,8 @@ def search(
 def case(case_id: int):
     with db.connect() as conn:
         row = db.get_case(conn, case_id)
-    if not row:
-        raise HTTPException(404, "사건을 찾을 수 없습니다.")
+        if not row:
+            raise HTTPException(404, "사건을 찾을 수 없습니다.")
+        row["related"] = db.related_cases(conn, case_id)
     row.pop("embedding", None)
     return row
