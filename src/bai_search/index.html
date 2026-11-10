@@ -85,6 +85,12 @@
   .empty { color:var(--muted); font-size:13px; padding:12px 0; }
   .note { font-size:12px; color:var(--muted); margin-top:12px; }
   tr.click { cursor:pointer; }
+  .simbox { margin-top:12px; }
+  .simbox h3 { font-size:14px; margin:0 0 4px; }
+  .sim { border-left:3px solid var(--line); padding:6px 10px; margin:6px 0; cursor:pointer; }
+  .sim:hover { border-left-color:var(--accent); }
+  .sim .why { font-size:12px; color:var(--muted); }
+  .sim .nested { margin-top:8px; cursor:default; }
   tr.click:hover td { background:var(--line); }
 
   .cond .tag { border-color:var(--accent); color:var(--accent); }
@@ -179,14 +185,10 @@ const runSearch = async (auto = true) => {
            ${(r.dispositions||[]).map(d => `<span class=tag>${esc(d)}</span>`).join("")}</div>
       <p>${esc(r.summary)}</p>`;
     div.onclick = async () => {
-      const c = await (await fetch("/api/cases/" + r.id)).json();
-      const rel = (c.related||[]).map(x => `#${x.id} ${esc(x.action_agency)}`).join(", ");
-      div.innerHTML += `<p class=meta>소관기관: ${esc(c.responsible_agency)} · 조치기관: ${esc(c.action_agency)}</p>
-        <p><b>조치할 사항</b><br>${esc(c.action_text).replace(/\n/g, " ")}</p>
-        ${rel ? `<p class=meta>같은 지적의 다른 기관 처분: ${rel}</p>` : ""}
-        <p class=meta>관련 법령: ${esc((c.related_laws||[]).join(", "))}</p>
-        <p class=meta>AI 요약은 참고용입니다. 아래 원문을 확인하십시오.</p><pre>${esc(c.body)}</pre>`;
       div.onclick = null;
+      const c = await (await fetch("/api/cases/" + r.id)).json();
+      div.insertAdjacentHTML("beforeend", caseDetail(c, true));
+      attachSimilar(div.querySelector(".simbox"), r.id);
     };
     out.appendChild(div);
   }
@@ -349,6 +351,41 @@ const heatmap = (matrix, types, disps) => {
       return `<td style="background:${sh.bg};color:${sh.fg}" data-tip="${esc(`${t.label} → ${d}: ${v}건`)}">${v}</td>`; }).join("")}</tr>`).join("")}</table></div>`;
 };
 
+// ---- 사건 상세와 유사사례 ----
+const caseDetail = (c, withBody) => {
+  const rel = (c.related || []).map(x => `#${x.id} ${esc(x.action_agency)}`).join(", ");
+  return `<p class=meta>소관기관: ${esc(c.responsible_agency)} · 조치기관: ${esc(c.action_agency)}</p>
+    <p><b>조치할 사항</b><br>${esc(c.action_text || "").replace(/\n/g, " ")}</p>
+    ${rel ? `<p class=meta>같은 지적의 다른 기관 처분: ${rel}</p>` : ""}
+    ${(c.related_laws || []).length ? `<p class=meta>관련 법령: ${esc(c.related_laws.join(", "))}</p>` : ""}
+    ${withBody ? `<p class=meta>AI 요약은 참고용입니다. 아래 원문을 확인하십시오.</p><pre>${esc(c.body)}</pre>`
+               : `<details><summary class=meta>원문 보기</summary><pre>${esc(c.body)}</pre></details>`}
+    <div class=simbox></div>`;
+};
+const attachSimilar = async (box, id) => {
+  if (!box) return;
+  box.innerHTML = "<p class=meta>비슷한 사례를 찾는 중…</p>";
+  const res = await fetch(`/api/cases/${id}/similar`);
+  const { results } = res.ok ? await res.json() : { results: [] };
+  if (!results.length) { box.innerHTML = "<p class=meta>비슷한 사례가 없습니다.</p>"; return; }
+  box.innerHTML = `<h3>비슷한 사례</h3><p class=meta>처분과 금액을 비교해 보세요. 점수는 내용 60% · 위반유형 25% · 처분 10% · 기관유형 5%</p>` +
+    results.map(r => `<div class=sim data-id="${r.id}">
+      <b>#${r.id} ${esc(r.title)}</b>
+      <div class=meta>${[esc(r.agency), (r.dispositions || []).join("·"), r.amount_krw ? eok(r.amount_krw) : "", r.published_on].filter(Boolean).join(" · ")}</div>
+      <div class=why>${esc(r.reasons.join(" · "))}</div></div>`).join("");
+  box.querySelectorAll(".sim").forEach(el => el.onclick = async e => {
+    e.stopPropagation();
+    if (e.target.closest(".nested")) return;
+    const open = el.querySelector(":scope > .nested");
+    if (open) { open.remove(); return; }
+    const c = await (await fetch("/api/cases/" + el.dataset.id)).json();
+    el.insertAdjacentHTML("beforeend", `<div class=nested>${c.summary ? `<p>${esc(c.summary)}</p>` : ""}${caseDetail(c, false)}</div>`);
+    const nb = el.querySelector(":scope > .nested .simbox");
+    nb.innerHTML = `<button type=button class=linkbtn>이 사례와 비슷한 사례 보기</button>`;
+    nb.querySelector("button").onclick = ev => { ev.stopPropagation(); attachSimilar(nb, el.dataset.id); };
+  });
+};
+
 let lastStats = null;
 const loadStats = async () => {
   const box = document.getElementById("stats");
@@ -413,9 +450,8 @@ const loadStats = async () => {
   topEl.querySelectorAll("tr.click").forEach(tr => tr.onclick = async () => {
     if (tr.nextElementSibling?.classList.contains("detail")) { tr.nextElementSibling.remove(); return; }
     const c = await (await fetch("/api/cases/" + tr.dataset.id)).json();
-    tr.insertAdjacentHTML("afterend", `<tr class=detail><td colspan=3><p>${esc(c.summary || "")}</p>
-      <p><b>조치할 사항</b><br>${esc(c.action_text || "").replace(/\n/g, " ")}</p>
-      <details><summary class=meta>원문 보기</summary><pre>${esc(c.body)}</pre></details></td></tr>`);
+    tr.insertAdjacentHTML("afterend", `<tr class=detail><td colspan=3><p>${esc(c.summary || "")}</p>${caseDetail(c, false)}</td></tr>`);
+    attachSimilar(tr.nextElementSibling.querySelector(".simbox"), tr.dataset.id);
   });
 };
 </script>

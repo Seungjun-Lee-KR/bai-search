@@ -259,3 +259,49 @@ def test_stats_api(conn):
     r = TestClient(app).get("/api/stats", params={"agency_type": "지방자치단체"}).json()
     assert r["kpi"]["cases"] == 0 and r["by_year"] == []
     assert TestClient(app).get("/api/stats").json()["kpi"]["cases"] == 3
+
+
+def _add(conn, tmp_path, name, disp, title, agency, body, tag):
+    from bai_search.collect import FileMeta, process_file
+    p = tmp_path / name
+    p.write_text(DOC.format(disp=disp, title=title, agency=agency, body=body, tag=tag))
+    return process_file(conn, p, FileMeta())
+
+
+def test_similar_cases(conn, tmp_path):
+    from bai_search.similar import find_similar
+
+    embezzle = "회계담당자가 세입금을 개인 계좌로 이체하여 횡령하였다. " * 20
+    a = _add(conn, tmp_path, "a.txt", "변 상 판 정", "출납직원 보관금 횡령", "◇◇군",
+             "출납직원이 보관금을 개인 계좌로 이체하여 횡령하였다. " * 20, "변상")
+    # 같은 지적을 다른 기관에 처분한 건(제목 같음) -> 추천에서 빠져야 함
+    _add(conn, tmp_path, "b.txt", "징 계 요 구", "회계직원 공금 횡령", "○○재단", embezzle + "추가 ", "징계")
+    src = conn.execute("SELECT id FROM cases WHERE title='회계직원 공금 횡령' AND action_agency='○○공단'"
+                       ).fetchone()["id"]
+    conn.execute("UPDATE cases SET violation_types = ARRAY['EMBEZZLE_FUNDS'] WHERE title LIKE '%%횡령%%'")
+
+    res = find_similar(conn, src)
+    titles = [r.title for r in res]
+    assert titles[0] == "출납직원 보관금 횡령"
+    assert "회계직원 공금 횡령" not in titles
+    top = res[0]
+    assert top.text_similarity and any(r.startswith("같은 위반유형: 공금 횡령") for r in top.reasons)
+    assert top.dispositions == ["변상판정"]
+    assert res[0].score >= res[-1].score
+
+    # 임베딩이 없으면 핵심어로 대신
+    conn.execute("DELETE FROM case_chunks")
+    res = find_similar(conn, src)
+    assert res and res[0].title == "출납직원 보관금 횡령" and res[0].text_similarity is not None
+    assert res[0].reasons[0].startswith("핵심어 유사도")
+
+
+def test_similar_api(conn):
+    from fastapi.testclient import TestClient
+    from bai_search.api import app
+
+    c = TestClient(app)
+    any_id = conn.execute("SELECT min(id) AS i FROM cases").fetchone()["i"]
+    r = c.get(f"/api/cases/{any_id}/similar").json()["results"]
+    assert all(x["id"] != any_id for x in r) and all("reasons" in x for x in r)
+    assert c.get("/api/cases/999999/similar").status_code == 404

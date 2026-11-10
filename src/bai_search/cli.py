@@ -5,6 +5,7 @@
   bai classify --limit 50                     # 아직 분류 안 된 사건을 Claude로 분류
   bai embed                                   # 의미 검색용 임베딩 생성
   bai ask "수의계약을 쪼개서 특정업체에 준 사례"   # 자연어 질문
+  bai similar 12                              # 사건 #12와 비슷한 사례 추천
   bai serve                                   # 검색 웹 서버 실행 (http://localhost:8000)
 """
 from __future__ import annotations
@@ -126,6 +127,21 @@ def cmd_ask(args) -> None:
         print(f"[{s.n}] #{s.case_id} {s.title}\n    \"{s.cited_text}\"")
 
 
+def cmd_similar(args) -> None:
+    from . import db
+    from .similar import find_similar
+
+    with db.connect() as conn:
+        src = conn.execute("SELECT title FROM cases WHERE id=%s", (args.case_id,)).fetchone()
+        if not src:
+            sys.exit(f"사건 #{args.case_id}이 없습니다.")
+        print(f"#{args.case_id} {src['title']} 과 비슷한 사례\n")
+        for s in find_similar(conn, args.case_id, args.limit):
+            money = f" · {s.amount_krw:,}원" if s.amount_krw else ""
+            print(f"#{s.id} {s.title} ({s.agency or '-'} · {', '.join(s.dispositions) or '-'}{money})")
+            print(f"    점수 {s.score:.2f} — {'; '.join(s.reasons)}")
+
+
 def cmd_serve(args) -> None:
     import uvicorn
 
@@ -169,6 +185,11 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--model", default=None, help="기본값은 환경변수 ASK_MODEL")
     s.add_argument("--no-auto", action="store_true", help="질문에서 조건을 자동으로 뽑지 않음")
     s.set_defaults(func=cmd_ask)
+
+    s = sub.add_parser("similar", help="사건과 비슷한 사례 추천")
+    s.add_argument("case_id", type=int)
+    s.add_argument("--limit", type=int, default=5)
+    s.set_defaults(func=cmd_similar)
 
     s = sub.add_parser("serve", help="검색 웹 서버 실행")
     s.add_argument("--host", default="127.0.0.1")

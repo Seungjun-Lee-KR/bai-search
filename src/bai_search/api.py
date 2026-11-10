@@ -166,3 +166,13 @@ def stats(year_from: int | None = None, year_to: int | None = None,
     f.agency_type = agency_type
     with db.connect() as conn:
         return collect_stats(conn, f)
+
+
+@app.get("/api/cases/{case_id}/similar")
+def similar(case_id: int, limit: int = Query(5, le=20)):
+    from .similar import find_similar
+
+    with db.connect() as conn:
+        if not conn.execute("SELECT 1 FROM cases WHERE id=%s", (case_id,)).fetchone():
+            raise HTTPException(404, "사건을 찾을 수 없습니다.")
+        return {"results": [asdict(s) for s in find_similar(conn, case_id, limit)]}
