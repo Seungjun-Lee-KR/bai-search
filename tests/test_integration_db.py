@@ -3,6 +3,7 @@
     TEST_DATABASE_URL=postgresql://bai@127.0.0.1:5433/bai_test pytest tests/test_integration_db.py
 """
 import os
+import time
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -127,3 +128,96 @@ def test_api_reports_conditions(conn):
     assert r["conditions"] == ["처분: 고발"] and r["relaxed"] is True
     r = TestClient(app).get("/api/search", params={"q": "고발된 횡령", "auto": "false"}).json()
     assert r["conditions"] == [] and "횡령" in r["results"][0]["title"]
+
+
+def _old(path):
+    t = time.time() - 60
+    os.utime(path, (t, t))
+
+
+def test_watch_pass_dedup_failure_zip_and_year(conn, tmp_path):
+    import zipfile
+    from bai_search.collect import run_pass
+    from bai_search.search import search_with_conditions
+
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    body = "회계직원이 보조금을 가로챘다. " * 30
+    doc = DOC.format(disp="고 발", title="보조금 횡령 고발", agency="□□군", body=body, tag="고발")
+    (inbox / "a.txt").write_text(doc)
+    (inbox / "a사본.txt").write_text(doc)                       # 같은 내용 -> 중복
+    (inbox / "빈문서.txt").write_text("짧음")                     # 실패
+    (inbox / "목록.csv").write_text("파일명,공개일,감사명\na.txt,2023-03-15,군 보조금 감사\n",
+                                    encoding="utf-8-sig")
+    with zipfile.ZipFile(inbox / "묶음.zip", "w") as zf:
+        zf.writestr("b.txt", DOC.format(disp="주 의 요 구", title="물품 검수 부실", agency="□□군",
+                                        body="납품되지 않은 물품을 검수 처리하였다. " * 30, tag="주의"))
+    (inbox / "받는중.pdf.crdownload").write_text("x")
+    for p in inbox.iterdir():
+        _old(p)
+
+    out = run_pass(conn, inbox, processed=tmp_path / "processed", failed=tmp_path / "failed")
+    status = {o.file: o.status for o in out}
+    assert status["a.txt"] == "saved" and status["a사본.txt"] == "duplicate"
+    assert status["빈문서.txt"] == "failed" and status["묶음__b.txt"] == "saved"
+    assert sorted(p.name for p in inbox.iterdir()) == ["목록.csv", "받는중.pdf.crdownload"]
+    assert (tmp_path / "failed" / "빈문서.txt.error.txt").exists()
+    log = (tmp_path / "processed" / "수집기록.csv").read_text(encoding="utf-8-sig")
+    assert log.startswith("처리시각") and "중복" in log
+
+    saved = next(o for o in out if o.file == "a.txt")
+    d = conn.execute("SELECT published_on, audit_name FROM documents WHERE id=%s",
+                     (saved.document_id,)).fetchone()
+    assert str(d["published_on"]) == "2023-03-15" and d["audit_name"] == "군 보조금 감사"
+    k = conn.execute("""SELECT count(*) FROM case_chunks k JOIN cases c ON c.id=k.case_id
+                        WHERE c.document_id=%s""", (saved.document_id,)).fetchone()["count"]
+    assert k > 0
+
+    # AI 분류 전이어도 공개일 연도로 연도 조건이 걸림
+    o = search_with_conditions(conn, "2023년 보조금")
+    assert not o.relaxed and conn.execute("SELECT title FROM cases WHERE id=%s", (o.ids[0],)
+                                          ).fetchone()["title"] == "보조금 횡령 고발"
+
+
+def test_upload_api(conn, tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from bai_search import api
+
+    monkeypatch.setattr(api, "DATA_DIR", tmp_path)
+    c = TestClient(api.app)
+    doc = DOC.format(disp="시 정 요 구", title="출장비 허위 청구", agency="◇◇공사",
+                     body="출장을 가지 않고 여비를 청구하였다. " * 30, tag="시정")
+    r = c.post("/api/upload", files=[("files", ("출장.txt", doc.encode(), "text/plain")),
+                                     ("files", ("x.exe", b"MZ", "application/octet-stream"))],
+               data={"published_on": "2024-07-01"}).json()["results"]
+    assert [x["status"] for x in r] == ["saved", "failed"] and r[0]["published_on"] == "2024-07-01"
+    r = c.post("/api/upload", files=[("files", ("다시.txt", doc.encode(), "text/plain"))]).json()["results"]
+    assert r[0]["status"] == "duplicate"
+    assert c.post("/api/upload", files=[("files", ("y.txt", doc.encode(), "text/plain"))],
+                  data={"published_on": "어제"}).status_code == 400
+    docs = c.get("/api/recent").json()["documents"]
+    assert docs[0]["title"] == "출장비 허위 청구" and docs[0]["unembedded"] == 0
+
+
+
+def test_duplicate_fills_missing_meta(conn, tmp_path):
+    from bai_search.collect import run_pass
+
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    doc = DOC.format(disp="주 의 요 구", title="검수 부실", agency="◎◎시",
+                     body="미납품 물품을 검수 처리하였다. " * 30, tag="주의")
+    (inbox / "first.txt").write_text(doc)
+    _old(inbox / "first.txt")
+    run_pass(conn, inbox, processed=tmp_path / "p", failed=tmp_path / "f")
+    (inbox / "second.txt").write_text(doc)
+    (inbox / "목록.csv").write_text("파일명,공개일,감사명\nsecond.txt,2022-02-02,◎◎시 기관운영감사\n",
+                                    encoding="utf-8")
+    _old(inbox / "second.txt")
+    out = run_pass(conn, inbox, processed=tmp_path / "p", failed=tmp_path / "f")
+    assert out[0].status == "duplicate" and "공개일·감사명" in out[0].message
+    d = conn.execute("SELECT published_on, audit_name FROM documents WHERE id=%s",
+                     (out[0].document_id,)).fetchone()
+    assert str(d["published_on"]) == "2022-02-02" and d["audit_name"] == "◎◎시 기관운영감사"
+    c = conn.execute("SELECT published_on FROM cases WHERE document_id=%s", (out[0].document_id,)).fetchone()
+    assert str(c["published_on"]) == "2022-02-02"

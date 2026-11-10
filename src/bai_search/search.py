@@ -41,10 +41,10 @@ class Filters:
             where.append(f"{alias}.agency_type = %s")
             params.append(self.agency_type)
         if self.year_from:
-            where.append(f"{alias}.audit_year >= %s")
+            where.append(f"COALESCE({alias}.audit_year, EXTRACT(YEAR FROM {alias}.published_on)::int) >= %s")
             params.append(self.year_from)
         if self.year_to:
-            where.append(f"{alias}.audit_year <= %s")
+            where.append(f"COALESCE({alias}.audit_year, EXTRACT(YEAR FROM {alias}.published_on)::int) <= %s")
             params.append(self.year_to)
         if self.agency:
             where.append(f"({alias}.agency ILIKE %s OR {alias}.action_agency ILIKE %s)")
@@ -111,7 +111,7 @@ def hybrid_search(conn, q: str, f: Filters | None = None, limit: int = 20,
     if not terms(q):  # 조건만 있는 질문(예: "2025년 징계 사례"): 조건에 맞는 목록
         fsql, fparams = f.sql()
         rows = conn.execute(
-            f"SELECT c.id FROM cases c WHERE {fsql} ORDER BY c.audit_year DESC NULLS LAST, c.id DESC LIMIT %s",
+            f"SELECT c.id FROM cases c WHERE {fsql} ORDER BY COALESCE(c.audit_year, EXTRACT(YEAR FROM c.published_on)::int) DESC NULLS LAST, c.id DESC LIMIT %s",
             fparams + [limit],
         ).fetchall()
         return [r["id"] for r in rows]

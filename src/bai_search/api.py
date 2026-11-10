@@ -4,7 +4,11 @@ from pathlib import Path
 
 from dataclasses import asdict
 
-from fastapi import FastAPI, HTTPException, Query
+import os
+import shutil
+from datetime import date
+
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -89,3 +93,65 @@ def case(case_id: int):
         row["related"] = db.related_cases(conn, case_id)
     row.pop("embedding", None)
     return row
+
+
+DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
+MAX_UPLOAD = 200 * 2**20
+
+
+@app.post("/api/upload")
+def upload(
+    files: list[UploadFile] = File(...),
+    published_on: str | None = Form(None),
+    audit_name: str | None = Form(None),
+    source_url: str | None = Form(None),
+    classify: bool = Form(False),
+):
+    """웹 화면에서 올린 파일을 받은 파일 폴더에 저장하고 바로 처리합니다."""
+    from .collect import (SUPPORTED, handle, meta_from_filename, nfc, override_meta,
+                          parse_date, unique_path, write_log)
+
+    pub = parse_date(published_on) if published_on else None
+    if published_on and not pub:
+        raise HTTPException(400, "공개일 형식을 알 수 없습니다. 예: 2026-05-12")
+    inbox, processed, failed = DATA_DIR / "inbox", DATA_DIR / "processed", DATA_DIR / "failed"
+    inbox.mkdir(parents=True, exist_ok=True)
+    results = []
+    with db.connect() as conn:
+        for up in files:
+            name = nfc(Path(up.filename or "upload").name)
+            if Path(name).suffix.lower() not in SUPPORTED | {".zip"}:
+                results.append({"file": name, "status": "failed",
+                                "message": "PDF·HWP·HWPX·ZIP 파일만 올릴 수 있습니다."})
+                continue
+            dest = unique_path(inbox / name)
+            with dest.open("wb") as f:
+                shutil.copyfileobj(up.file, f, length=1 << 20)
+            if dest.stat().st_size > MAX_UPLOAD:
+                dest.unlink()
+                results.append({"file": name, "status": "failed", "message": "200MB를 넘는 파일입니다."})
+                continue
+            meta_for = lambda t: override_meta(meta_from_filename(t.name), pub,
+                                               audit_name or None, source_url or None)
+            outcomes = handle(conn, dest, meta_for, processed=processed, failed=failed,
+                              classify=classify)
+            write_log(processed / "수집기록.csv", outcomes)
+            results += [asdict(o) for o in outcomes]
+    return {"results": results}
+
+
+@app.get("/api/recent")
+def recent(limit: int = Query(20, le=100)):
+    """최근 저장된 문서 목록 (자료 추가 화면용)."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            """SELECT d.id, d.title, d.published_on, d.audit_name, d.collected_at,
+                      count(c.id) AS cases,
+                      count(c.id) FILTER (WHERE c.summary IS NULL) AS unclassified,
+                      count(c.id) FILTER (WHERE NOT EXISTS (
+                          SELECT 1 FROM case_chunks k WHERE k.case_id = c.id)) AS unembedded
+               FROM documents d LEFT JOIN cases c ON c.document_id = d.id
+               GROUP BY d.id ORDER BY d.collected_at DESC, d.id DESC LIMIT %s""",
+            (limit,),
+        ).fetchall()
+    return {"documents": rows}

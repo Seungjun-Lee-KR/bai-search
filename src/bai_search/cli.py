@@ -1,6 +1,7 @@
 """명령줄 도구.
 
-  bai ingest data/raw --source audit_report   # 폴더 안 PDF/HWP/HWPX를 읽어 DB에 저장
+  bai watch                                   # data/inbox에 넣은 파일을 자동 처리 (반자동 수집)
+  bai ingest data/raw                         # 폴더 안 PDF/HWP/HWPX를 한 번에 저장
   bai classify --limit 50                     # 아직 분류 안 된 사건을 Claude로 분류
   bai embed                                   # 의미 검색용 임베딩 생성
   bai ask "수의계약을 쪼개서 특정업체에 준 사례"   # 자연어 질문
@@ -14,33 +15,61 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-SUPPORTED = {".pdf", ".hwp", ".hwpx", ".txt"}
+def _print_outcome(o) -> None:
+    label = {"saved": "저장", "duplicate": "중복", "failed": "실패"}[o.status]
+    extra = f" 사건 {o.cases}건" if o.cases else ""
+    date = f" (공개일 {o.published_on})" if o.published_on else ""
+    print(f"[{label}] {o.file}{extra}{date} {o.message}".rstrip())
+    for w in o.warnings:
+        print(f"    ! {w}")
 
 
 def cmd_ingest(args) -> None:
+    """폴더 안 파일을 그대로 둔 채 저장 (옮기지 않음)."""
     from . import db
-    from .parsers import ParseError, extract_text
-    from .segment import split_cases
+    from .collect import SUPPORTED, load_manifest, process_file, resolve_meta
 
-    files = sorted(p for p in Path(args.folder).rglob("*") if p.suffix.lower() in SUPPORTED)
+    folder = Path(args.folder)
+    files = sorted(p for p in folder.rglob("*") if p.suffix.lower() in SUPPORTED)
     if not files:
         sys.exit(f"{args.folder} 에 PDF/HWP/HWPX 파일이 없습니다.")
+    manifest = load_manifest(folder)
     with db.connect() as conn:
         for path in files:
-            try:
-                text = extract_text(path)
-            except ParseError as e:
-                print(f"[건너뜀] {path.name}: {e}")
-                continue
-            segments = split_cases(text)
-            title = segments[0].title if len(segments) == 1 else path.stem
-            doc_id = db.insert_document(conn, source=args.source, title=title,
-                                        full_text=text, file_path=str(path))
-            conn.execute("DELETE FROM cases WHERE document_id = %s", (doc_id,))
-            for seg in segments:
-                db.insert_case(conn, document_id=doc_id, seg=seg)
-            conn.commit()
-            print(f"[저장] {path.name}: 사건 {len(segments)}건")
+            meta = resolve_meta(path, manifest)
+            if args.source:
+                meta.source = args.source
+            _print_outcome(process_file(conn, path, meta, embed=not args.no_embed,
+                                        classify=args.classify, force=args.force))
+
+
+def cmd_watch(args) -> None:
+    import time
+
+    from . import db
+    from .collect import run_pass
+
+    inbox, root = Path(args.inbox), Path(args.inbox).parent
+    processed, failed = root / "processed", root / "failed"
+    print(f"받은 파일 폴더: {inbox.resolve()}")
+    print("  PDF·HWP·HWPX·ZIP 파일을 넣으면 자동으로 처리합니다. 공개일·감사명은 목록.csv 또는 파일명에서 읽습니다.")
+    if not args.once:
+        print(f"  {args.interval}초마다 확인합니다. 끝내려면 Ctrl+C")
+    try:
+        while True:
+            with db.connect() as conn:
+                outcomes = run_pass(conn, inbox, processed=processed, failed=failed,
+                                    embed=not args.no_embed, classify=args.classify)
+            for o in outcomes:
+                _print_outcome(o)
+            if outcomes:
+                n = {k: sum(o.status == k for o in outcomes) for k in ("saved", "duplicate", "failed")}
+                print(f"-- 저장 {n['saved']} · 중복 {n['duplicate']} · 실패 {n['failed']}  (기록: {processed / '수집기록.csv'})")
+            if args.once:
+                break
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print("\n중지했습니다.")
 
 
 def cmd_classify(args) -> None:
@@ -108,11 +137,22 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="bai", description="감사원 결정례 검색 도구")
     sub = p.add_subparsers(required=True)
 
-    s = sub.add_parser("ingest", help="문서 폴더를 읽어 DB에 저장")
+    s = sub.add_parser("ingest", help="문서 폴더를 읽어 DB에 저장 (파일은 그대로 둠)")
     s.add_argument("folder")
-    s.add_argument("--source", default="audit_report",
+    s.add_argument("--source", default=None,
                    choices=["audit_report", "review_decision", "compensation", "other"])
+    s.add_argument("--force", action="store_true", help="이미 저장된 같은 파일도 다시 처리")
+    s.add_argument("--no-embed", action="store_true", help="임베딩은 나중에 bai embed로")
+    s.add_argument("--classify", action="store_true", help="저장 직후 AI 분류까지 (API 비용 발생)")
     s.set_defaults(func=cmd_ingest)
+
+    s = sub.add_parser("watch", help="받은 파일 폴더를 지켜보며 새 파일을 자동 처리")
+    s.add_argument("inbox", nargs="?", default="data/inbox")
+    s.add_argument("--interval", type=int, default=30, help="확인 간격(초)")
+    s.add_argument("--once", action="store_true", help="한 번만 처리하고 끝냄 (작업 스케줄러용)")
+    s.add_argument("--no-embed", action="store_true")
+    s.add_argument("--classify", action="store_true", help="저장 직후 AI 분류까지 (API 비용 발생)")
+    s.set_defaults(func=cmd_watch)
 
     s = sub.add_parser("classify", help="미분류 사건을 Claude로 분류")
     s.add_argument("--limit", type=int, default=20)

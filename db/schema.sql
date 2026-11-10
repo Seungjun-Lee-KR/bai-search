@@ -57,3 +57,10 @@ CREATE TABLE IF NOT EXISTS case_chunks (
 );
 CREATE INDEX IF NOT EXISTS case_chunks_case ON case_chunks (case_id);
 CREATE INDEX IF NOT EXISTS case_chunks_hnsw ON case_chunks USING hnsw (embedding vector_cosine_ops);
+
+-- 반자동 수집: 내용 해시로 중복 방지, 공개일·감사명
+ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_source_url_key;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS sha256 TEXT;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS audit_name TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS documents_sha256 ON documents (sha256);
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS published_on DATE;

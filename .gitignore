@@ -6,3 +6,7 @@ data/raw/
 data/text/
 .pytest_cache/
 *.egg-info/
+data/inbox/*
+!data/inbox/.gitkeep
+data/processed/
+data/failed/
