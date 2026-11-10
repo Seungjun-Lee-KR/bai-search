@@ -9,7 +9,7 @@ import os
 from dataclasses import dataclass, field
 
 from .classify import redact
-from .search import Filters, best_chunks, hybrid_search
+from .search import Filters, best_chunks, search_with_conditions
 
 DEFAULT_MODEL = "claude-opus-5-5"
 TOP_CASES = 6
@@ -42,6 +42,8 @@ class Answer:
     sources: list[Source] = field(default_factory=list)
     cases: list[dict] = field(default_factory=list)
     refused: bool = False
+    conditions: list[str] = field(default_factory=list)  # 질문에서 뽑아 적용한 조건
+    relaxed: bool = False                                 # 조건에 맞는 사례가 없어 조건 없이 찾았는지
 
 
 def _case_document(case: dict, chunks: list[str] | None) -> dict:
@@ -68,8 +70,13 @@ def _case_document(case: dict, chunks: list[str] | None) -> dict:
     }
 
 
-def retrieve(conn, question: str, filters: Filters | None = None, k: int = TOP_CASES) -> list[dict]:
-    ids = hybrid_search(conn, question, filters, limit=k)
+def retrieve(conn, question: str, filters: Filters | None = None, k: int = TOP_CASES,
+             auto: bool = True):
+    outcome = search_with_conditions(conn, question, filters, limit=k, auto=auto)
+    return _load(conn, outcome.ids), outcome
+
+
+def _load(conn, ids: list[int]) -> list[dict]:
     if not ids:
         return []
     rows = conn.execute(
@@ -82,9 +89,16 @@ def retrieve(conn, question: str, filters: Filters | None = None, k: int = TOP_C
     return [by_id[i] for i in ids if i in by_id]
 
 
-def build_request(question: str, cases: list[dict], chunks: dict[int, list[str]], model: str) -> dict:
+def build_request(question: str, cases: list[dict], chunks: dict[int, list[str]], model: str,
+                  conditions: list[str] | None = None, relaxed: bool = False) -> dict:
     content = [_case_document(c, chunks.get(c["id"])) for c in cases]
-    content.append({"type": "text", "text": f"질문: {question}"})
+    note = ""
+    if conditions and relaxed:
+        note = (f"\n(참고: 질문의 조건 [{', '.join(conditions)}]에 맞는 사례가 없어 조건 없이 찾은 사례입니다. "
+                "답변 첫머리에 이 점을 밝히세요.)")
+    elif conditions:
+        note = f"\n(참고: 검색 조건 [{', '.join(conditions)}]을 적용해 찾은 사례입니다.)"
+    content.append({"type": "text", "text": f"질문: {question}{note}"})
     return dict(
         model=model,
         max_tokens=16000,
@@ -125,14 +139,18 @@ def parse_response(response, cases: list[dict]) -> Answer:
 
 
 def ask(conn, question: str, filters: Filters | None = None, client=None,
-        model: str | None = None) -> Answer:
-    cases = retrieve(conn, question, filters)
+        model: str | None = None, auto: bool = True) -> Answer:
+    cases, outcome = retrieve(conn, question, filters, auto=auto)
     if not cases:
-        return Answer(parts=[{"text": "검색된 사례가 없습니다. 검색어나 조건을 바꿔 보세요.", "refs": []}])
+        return Answer(parts=[{"text": "검색된 사례가 없습니다. 검색어나 조건을 바꿔 보세요.", "refs": []}],
+                      conditions=outcome.conditions, relaxed=outcome.relaxed)
     chunks = best_chunks(conn, question, [c["id"] for c in cases if len(c["body"]) > FULL_BODY_LIMIT])
     if client is None:
         import anthropic
         client = anthropic.Anthropic()
     model = model or os.environ.get("ASK_MODEL", DEFAULT_MODEL)
-    response = client.beta.messages.create(**build_request(question, cases, chunks, model))
-    return parse_response(response, cases)
+    response = client.beta.messages.create(
+        **build_request(question, cases, chunks, model, outcome.conditions, outcome.relaxed))
+    ans = parse_response(response, cases)
+    ans.conditions, ans.relaxed = outcome.conditions, outcome.relaxed
+    return ans

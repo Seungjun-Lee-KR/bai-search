@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from . import db
-from .search import Filters, hybrid_search
+from .search import Filters, search_with_conditions
 from .taxonomy import DISPOSITIONS, VIOLATION_TYPES
 
 app = FastAPI(title="감사원 결정례 검색")
@@ -40,14 +40,16 @@ def search(
     year_to: int | None = None,
     agency: str | None = None,
     min_amount: int | None = None,
+    auto: bool = True,
     limit: int = Query(20, le=100),
     offset: int = 0,
 ):
     f = Filters(violation_type, disposition, year_from, year_to, agency, min_amount)
     with db.connect() as conn:
         if q:  # 검색어가 있으면 키워드 + 의미 혼합 검색
-            ids = hybrid_search(conn, q, f, limit=offset + limit)[offset:]
-            return {"results": db.rows_by_ids(conn, ids), "mode": "hybrid"}
+            out = search_with_conditions(conn, q, f, limit=offset + limit, auto=auto)
+            return {"results": db.rows_by_ids(conn, out.ids[offset:]), "mode": "hybrid",
+                    "conditions": out.conditions, "relaxed": out.relaxed}
         rows = db.search(conn, q=None, violation_type=violation_type, disposition=disposition,
                          year_from=year_from, year_to=year_to, agency=agency,
                          min_amount=min_amount, limit=limit, offset=offset)
@@ -62,6 +64,7 @@ class AskRequest(BaseModel):
     year_to: int | None = None
     agency: str | None = None
     min_amount: int | None = None
+    auto: bool = True
 
 
 @app.post("/api/ask")
@@ -73,7 +76,7 @@ def ask_endpoint(req: AskRequest):
     f = Filters(req.violation_type, req.disposition, req.year_from, req.year_to,
                 req.agency, req.min_amount)
     with db.connect() as conn:
-        ans = ask(conn, req.question, f)
+        ans = ask(conn, req.question, f, auto=req.auto)
     return asdict(ans)
 
 

@@ -97,3 +97,33 @@ def test_api(conn):
     first = r["results"][0]["id"]
     assert c.get(f"/api/cases/{first}").json()["action_text"].endswith("(징계)")
     assert c.post("/api/ask", json={"question": " "}).status_code == 400
+
+
+def test_conditions_applied_and_relaxed(conn):
+    from bai_search.search import search_with_conditions
+
+    title = lambda i: conn.execute("SELECT title FROM cases WHERE id=%s", (i,)).fetchone()["title"]
+    out = search_with_conditions(conn, "징계 받은 사례")
+    assert out.conditions == ["처분: 징계요구"] and not out.relaxed
+    assert [title(i) for i in out.ids] == ["회계직원 공금 횡령"]
+
+    out = search_with_conditions(conn, "△△청 정보연계")
+    assert out.conditions == ["기관: △△청"] and "정보연계" in title(out.ids[0])
+
+    # 연도는 AI 분류 전이라 비어 있음 -> 0건 -> 조건 풀고 다시 검색
+    out = search_with_conditions(conn, "2025년 공금 횡령")
+    assert out.relaxed and "횡령" in title(out.ids[0])
+
+    conn.execute("UPDATE cases SET audit_year = 2025, amount_krw = 300000000 WHERE title LIKE '%%횡령%%'")
+    out = search_with_conditions(conn, "2025년 1억 원 이상 사례")
+    assert not out.relaxed and [title(i) for i in out.ids] == ["회계직원 공금 횡령"]
+
+
+def test_api_reports_conditions(conn):
+    from fastapi.testclient import TestClient
+    from bai_search.api import app
+
+    r = TestClient(app).get("/api/search", params={"q": "고발된 횡령"}).json()
+    assert r["conditions"] == ["처분: 고발"] and r["relaxed"] is True
+    r = TestClient(app).get("/api/search", params={"q": "고발된 횡령", "auto": "false"}).json()
+    assert r["conditions"] == [] and "횡령" in r["results"][0]["title"]

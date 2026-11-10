@@ -85,7 +85,10 @@ def cmd_ask(args) -> None:
     from .ask import ask
 
     with db.connect() as conn:
-        ans = ask(conn, args.question, model=args.model)
+        ans = ask(conn, args.question, model=args.model, auto=not args.no_auto)
+    if ans.conditions:
+        print(("[조건에 맞는 사례가 없어 조건 없이 검색] " if ans.relaxed else "[적용 조건] ")
+              + " · ".join(ans.conditions) + "\n")
     for part in ans.parts:
         refs = "".join(f"[{n}]" for n in part["refs"])
         print(part["text"] + refs, end="")
@@ -124,6 +127,7 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("ask", help="자연어로 질문하고 원문 인용과 함께 답 받기")
     s.add_argument("question")
     s.add_argument("--model", default=None, help="기본값은 환경변수 ASK_MODEL")
+    s.add_argument("--no-auto", action="store_true", help="질문에서 조건을 자동으로 뽑지 않음")
     s.set_defaults(func=cmd_ask)
 
     s = sub.add_parser("serve", help="검색 웹 서버 실행")

@@ -31,6 +31,9 @@
   #answer p { margin:0 0 8px; }
   sup a { color:var(--accent); text-decoration:none; font-size:11px; }
   .src { border-left:3px solid var(--line); padding:4px 10px; margin:8px 0; font-size:14px; }
+  .cond { font-size:13px; margin:0 0 12px; }
+  .cond .tag { border-color:var(--accent); color:var(--accent); }
+  .cond a { color:var(--muted); margin-left:6px; }
   .src:target { border-left-color:var(--accent); }
 </style>
 </head>
@@ -62,6 +65,13 @@
 </main>
 <script>
 const labels = {};
+// 질문에서 자동으로 뽑은 조건 표시. 조건 없이 다시 찾기 링크 포함
+const condHtml = (r, again) => {
+  if (!r.conditions || !r.conditions.length) return "";
+  const chips = r.conditions.map(c => `<span class=tag>${esc(c)}</span>`).join("");
+  if (r.relaxed) return `<p class="cond review">조건 ${chips}에 맞는 사례가 없어 조건 없이 찾았습니다. (연도·금액·기관유형은 AI 분류를 마친 사건만 걸러집니다)</p>`;
+  return `<p class=cond>질문에서 찾은 조건: ${chips}<a href="#" data-again="${again}">조건 없이 다시 찾기</a></p>`;
+};
 const won = n => n == null ? "" : n.toLocaleString("ko-KR") + "원";
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 fetch("/api/taxonomy").then(r => r.json()).then(t => {
@@ -70,17 +80,18 @@ fetch("/api/taxonomy").then(r => r.json()).then(t => {
   const ds = document.querySelector("[name=disposition]");
   t.dispositions.forEach(d => ds.add(new Option(d, d)));
 });
-document.getElementById("f").addEventListener("submit", async e => {
-  e.preventDefault();
-  const params = new URLSearchParams([...new FormData(e.target)].filter(([, v]) => v));
-  const { results } = await (await fetch("/api/search?" + params)).json();
+const runSearch = async (auto = true) => {
+  const params = new URLSearchParams([...new FormData(document.getElementById("f"))].filter(([, v]) => v));
+  if (!auto) params.set("auto", "false");
+  const data = await (await fetch("/api/search?" + params)).json();
+  const results = data.results;
   const out = document.getElementById("out");
-  out.innerHTML = results.length ? "" : "<p class=meta>결과가 없습니다.</p>";
+  out.innerHTML = condHtml(data, "search") + (results.length ? "" : "<p class=meta>결과가 없습니다.</p>");
   for (const r of results) {
     const div = document.createElement("div");
     div.className = "item";
     div.innerHTML = `<h2>${esc(r.title)}</h2>
-      <div class=meta>${esc(r.agency)} · ${r.audit_year ?? ""} · ${won(r.amount_krw)}
+      <div class=meta>${[esc(r.action_agency || r.agency), r.audit_year && r.audit_year + "년", won(r.amount_krw)].filter(Boolean).join(" · ")}
         ${r.needs_review ? "<span class=review>· 분류 검수 필요</span>" : ""}</div>
       <div>${(r.violation_types||[]).map(c => `<span class=tag>${esc(labels[c]||c)}</span>`).join("")}
            ${(r.dispositions||[]).map(d => `<span class=tag>${esc(d)}</span>`).join("")}</div>
@@ -97,7 +108,8 @@ document.getElementById("f").addEventListener("submit", async e => {
     };
     out.appendChild(div);
   }
-});
+};
+document.getElementById("f").addEventListener("submit", e => { e.preventDefault(); runSearch(); });
 const tab = on => {
   for (const k of ["search", "ask"]) {
     document.getElementById("t-" + k).classList.toggle("on", k === on);
@@ -106,22 +118,28 @@ const tab = on => {
 };
 document.getElementById("t-search").onclick = () => tab("search");
 document.getElementById("t-ask").onclick = () => tab("ask");
-document.getElementById("af").addEventListener("submit", async e => {
+document.addEventListener("click", e => {
+  const a = e.target.closest("[data-again]");
+  if (!a) return;
   e.preventDefault();
-  const question = new FormData(e.target).get("question").trim();
+  a.dataset.again === "search" ? runSearch(false) : runAsk(false);
+});
+document.getElementById("af").addEventListener("submit", e => { e.preventDefault(); runAsk(); });
+const runAsk = async (auto = true) => {
+  const question = new FormData(document.getElementById("af")).get("question").trim();
   if (!question) return;
   const box = document.getElementById("answer");
   box.innerHTML = "<p class=meta>사례를 찾고 답변을 만드는 중입니다…</p>";
   const res = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" },
-                                        body: JSON.stringify({ question }) });
+                                        body: JSON.stringify({ question, auto }) });
   if (!res.ok) { box.innerHTML = `<p class=review>오류: ${esc((await res.json()).detail || res.status)}</p>`; return; }
   const a = await res.json();
   const body = a.parts.map(p => esc(p.text) + p.refs.map(n => `<sup><a href="#src-${n}">[${n}]</a></sup>`).join("")).join("");
   const paras = body.split(/\n{2,}/).map(t => `<p>${t.replace(/\n/g, "<br>")}</p>`).join("");
   const srcs = a.sources.map(s => `<div class=src id="src-${s.n}"><b>[${s.n}]</b> #${s.case_id} ${esc(s.title)}<br>“${esc(s.cited_text)}”</div>`).join("");
   const cases = a.cases.map(c => `<span class=tag>#${c.id} ${esc(c.title)} · ${esc(c.action_agency)}</span>`).join(" ");
-  box.innerHTML = paras + (srcs ? "<h2>근거 원문</h2>" + srcs : "") + (cases ? `<p class=meta>검토한 사례: ${cases}</p>` : "");
-});
+  box.innerHTML = condHtml(a, "ask") + paras + (srcs ? "<h2>근거 원문</h2>" + srcs : "") + (cases ? `<p class=meta>검토한 사례: ${cases}</p>` : "");
+};
 </script>
 </body>
 </html>

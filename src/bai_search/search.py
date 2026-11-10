@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .embed import get_embedder, to_pgvector
 
@@ -23,6 +23,8 @@ class Filters:
     year_to: int | None = None
     agency: str | None = None
     min_amount: int | None = None
+    dispositions: list[str] = field(default_factory=list)   # 하나라도 해당하면
+    agency_type: str | None = None
 
     def sql(self, alias: str = "c") -> tuple[str, list]:
         where, params = [], []
@@ -32,6 +34,12 @@ class Filters:
         if self.disposition:
             where.append(f"%s = ANY({alias}.dispositions)")
             params.append(self.disposition)
+        if self.dispositions:
+            where.append(f"{alias}.dispositions && %s::text[]")
+            params.append(list(self.dispositions))
+        if self.agency_type:
+            where.append(f"{alias}.agency_type = %s")
+            params.append(self.agency_type)
         if self.year_from:
             where.append(f"{alias}.audit_year >= %s")
             params.append(self.year_from)
@@ -100,6 +108,13 @@ def rrf(*rankings: list[int]) -> list[int]:
 def hybrid_search(conn, q: str, f: Filters | None = None, limit: int = 20,
                   use_vector: bool = True) -> list[int]:
     f = f or Filters()
+    if not terms(q):  # 조건만 있는 질문(예: "2025년 징계 사례"): 조건에 맞는 목록
+        fsql, fparams = f.sql()
+        rows = conn.execute(
+            f"SELECT c.id FROM cases c WHERE {fsql} ORDER BY c.audit_year DESC NULLS LAST, c.id DESC LIMIT %s",
+            fparams + [limit],
+        ).fetchall()
+        return [r["id"] for r in rows]
     kw = keyword_ranking(conn, q, f)
     vec = vector_ranking(conn, q, f) if use_vector and has_embeddings(conn) else []
     return rrf(kw, vec)[:limit]
@@ -126,3 +141,27 @@ def best_chunks(conn, q: str, case_ids: list[int], per_case: int = 3) -> dict[in
     for r in rows:
         out.setdefault(r["case_id"], []).append(r["text"])
     return out
+
+
+@dataclass
+class SearchOutcome:
+    ids: list[int]
+    conditions: list[str]      # 질문에서 뽑아 적용한 조건 (화면 표시용)
+    relaxed: bool = False      # 조건 때문에 0건이라 조건 없이 다시 찾았는지
+
+
+def search_with_conditions(conn, q: str, explicit: Filters | None = None, limit: int = 20,
+                           auto: bool = True) -> SearchOutcome:
+    """질문에서 조건을 뽑아 적용해 검색하고, 0건이면 자동 조건을 풀고 다시 찾습니다."""
+    from .conditions import extract, known_agencies, merge
+
+    explicit = explicit or Filters()
+    if not auto:
+        return SearchOutcome(hybrid_search(conn, q, explicit, limit), [])
+    ex = extract(q, known_agencies(conn))
+    if not ex.any():
+        return SearchOutcome(hybrid_search(conn, q, explicit, limit), [])
+    ids = hybrid_search(conn, ex.query, merge(explicit, ex.filters), limit)
+    if ids:
+        return SearchOutcome(ids, ex.labels)
+    return SearchOutcome(hybrid_search(conn, q, explicit, limit), ex.labels, relaxed=True)
